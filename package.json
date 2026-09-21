@@ -3,12 +3,28 @@
   "version": "1.0.0",
   "description": "WhatsApp bulk message sender with Google Sheet monitor and reports",
   "main": "server.js",
+  "bin": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "bundle": "esbuild server.js --bundle --platform=node --target=node20 --outfile=build/bundle.js --format=cjs",
+    "build:exe": "node build-exe.js"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "pkg": {
+    "assets": [
+      "build/public/**/*"
+    ],
+    "targets": [
+      "node20.18.0-win-x64"
+    ],
+    "outputPath": "dist"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^5.16.1",
+    "esbuild": "^0.28.2"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",

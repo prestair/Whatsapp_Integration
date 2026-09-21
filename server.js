@@ -1,5 +1,10 @@
 const express = require('express');
+// Baileys v7+ is ESM-only. We bundle the whole app into a single CommonJS file
+// with esbuild before packaging, so a normal require works here and esbuild
+// converts Baileys to CJS in the bundle. loadBaileys() stays as a thin async
+// shim so the rest of the code doesn't change.
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+async function loadBaileys() { /* no-op: bundled statically */ }
 const QRCode = require('qrcode');
 const multer = require('multer');
 const path = require('path');
@@ -284,6 +289,9 @@ function columnLetter(index) {
 
 // ===== WhatsApp Connection =====
 async function connectWhatsApp(profileName) {
+  // Ensure the ESM Baileys module is loaded before we use it
+  await loadBaileys();
+
   // Disconnect existing if any
   if (sock) {
     try { sock.end(); } catch (e) {}
