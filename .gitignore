@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# WhatsApp / Baileys auth & session data (SECRET — grants account access)
+auth_info/
+profiles/
+
+# App config with credentials / deployment URLs
+sheet_config.json
+
+# Runtime data
+message_history.json
+uploads/
+
+# Logs
+*.log
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+{
+  "sheetUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit",
+  "sheetTab": "Sheet1",
+  "appsScriptUrl": "https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec",
+  "phoneColumn": "phone_number",
+  "nameColumn": "full_name",
+  "statusColumn": "Status",
+  "dateColumn": "Date",
+  "message": "Your message here",
+  "imagePath": "uploads/your_image.jpeg",
+  "intervalSeconds": 120
+}

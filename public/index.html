@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Enquiry Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="#25D366">
+          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+        </svg>
+        <h1>WA Enquiry Dashboard</h1>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <button class="btn btn-sm" id="openReportBtn" style="background:#128C7E;color:#fff;">📊 Report</button>
+        <div class="status-badge" id="statusBadge">
+          <span class="status-dot disconnected"></span>
+          <span id="statusText">Disconnected</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- QR Section -->
+      <section class="card qr-section" id="qrSection">
+        <div class="qr-header">
+          <h3>Scan QR Code</h3>
+          <small>WhatsApp > Linked Devices > Link</small>
+        </div>
+        <div class="qr-container" id="qrContainer">
+          <div class="qr-placeholder">
+            <div class="spinner"></div>
+            <small>Loading...</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="card connected-section" id="connectedSection" style="display:none;">
+        <span class="connected-banner"><span class="checkmark">&#10004;</span> Connected: <strong id="activeProfileName">default</strong> <span id="loggedInNumber" style="color:#128C7E;font-weight:normal;"></span></span>
+        <div class="profile-actions">
+          <button class="btn btn-sm" id="switchProfileBtn" style="background:#128C7E;color:#fff;">Switch Profile</button>
+          <button class="btn btn-danger btn-sm" id="logoutBtn">Logout</button>
+        </div>
+      </section>
+
+      <!-- Profile Manager (hidden) -->
+      <section class="card compact" id="profileSection" style="display:none;">
+        <h3>WhatsApp Profiles</h3>
+        <div class="form-row-2col">
+          <div>
+            <label>New Profile Name</label>
+            <input type="text" id="newProfileName" class="input" placeholder="e.g. Business, Personal, Sales">
+          </div>
+          <div style="display:flex;align-items:flex-end;">
+            <button class="btn btn-primary" id="connectProfileBtn" style="width:100%">Connect</button>
+          </div>
+        </div>
+        <div id="profileList" class="profile-list"></div>
+      </section>
+
+      <!-- ===== TABS ===== -->
+      <div class="tabs">
+        <button class="tab active" data-tab="sheetTab">Google Sheet Monitor</button>
+        <button class="tab" data-tab="manualTab">Manual Bulk Send</button>
+      </div>
+
+      <!-- ===== TAB 1: Google Sheet Monitor ===== -->
+      <div class="tab-content active" id="sheetTab">
+        <!-- Sheet Monitor Status (TOP) -->
+        <section class="card compact" id="sheetStatusSection" style="display:none;">
+          <div class="monitor-status">
+            <div class="monitor-active">
+              <span class="pulse-dot"></span>
+              <strong>Monitoring Active</strong>
+            </div>
+            <button class="btn btn-danger btn-sm" id="stopMonitorBtn">Stop</button>
+          </div>
+          <div class="monitor-stats">
+            <span>Processed: <strong id="sheetProcessed">0</strong></span>
+            <span>New Sent: <strong id="sheetNewSent">0</strong></span>
+            <span>Failed: <strong id="sheetFailed">0</strong></span>
+          </div>
+          <div class="log-container" id="sheetLogContainer"></div>
+        </section>
+
+        <section class="card compact">
+          <h3>Google Sheet Setup</h3>
+          <div class="form-row-2col">
+            <div>
+              <label>Check Interval (sec)</label>
+              <input type="number" id="intervalSeconds" class="input" value="30" min="10">
+            </div>
+            <div style="display:flex;align-items:flex-end;">
+              <button class="btn btn-primary" id="startMonitorBtn" style="width:100%">Start Monitoring</button>
+            </div>
+          </div>
+          <div class="form-row">
+            <label>Sheet Link (Public)</label>
+            <input type="text" id="sheetUrl" class="input" placeholder="https://docs.google.com/spreadsheets/d/xxxxx/edit">
+          </div>
+          <div class="form-row">
+            <label>Sheet Tab Name</label>
+            <input type="text" id="sheetTabName" class="input" placeholder="Sheet1 (exact name of the tab to read)">
+          </div>
+          <div class="form-row">
+            <label>Apps Script URL</label>
+            <input type="text" id="appsScriptUrl" class="input" placeholder="https://script.google.com/macros/s/xxxxx/exec">
+            <small class="hint">Sheet > Extensions > Apps Script > paste code > Deploy > paste the URL here (one time)</small>
+          </div>
+          <div class="form-row-2col">
+            <div>
+              <label>Phone Column Name</label>
+              <input type="text" id="phoneColumn" class="input" placeholder="phone">
+            </div>
+            <div>
+              <label>Name Column (optional)</label>
+              <input type="text" id="nameColumn" class="input" placeholder="name">
+            </div>
+          </div>
+          <div class="form-row-2col">
+            <div>
+              <label>Status Column Name</label>
+              <input type="text" id="statusColumn" class="input" placeholder="status (will be set to 'Sent')">
+            </div>
+            <div>
+              <label>Date Column Name</label>
+              <input type="text" id="dateColumn" class="input" placeholder="date_sent (the date will go here)">
+            </div>
+          </div>
+          <div class="form-row">
+            <label>Predefined Message</label>
+            <textarea id="sheetMessage" class="textarea" rows="3" placeholder="Hi {name}, thank you for your enquiry! We will contact you soon.&#10;&#10;Use {name}, {phone}, {email} etc as placeholders"></textarea>
+            <small class="hint">Use {name}, {phone} or any column name as placeholder</small>
+          </div>
+          <div class="form-row">
+            <label>Image (Optional)</label>
+            <div class="upload-row" id="sheetUploadArea">
+              <input type="file" id="sheetImageInput" accept="image/*" hidden>
+              <div class="upload-btn-area" id="sheetUploadPlaceholder">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="#888"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                <span>Attach Image</span>
+              </div>
+              <div class="upload-preview" id="sheetUploadPreview" style="display:none;">
+                <img id="sheetPreviewImage" src="" alt="Preview">
+                <button class="btn btn-danger btn-xs" id="sheetRemoveImage">&times;</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- ===== TAB 2: Manual Bulk Send ===== -->
+      <div class="tab-content" id="manualTab">
+        <div class="two-col">
+          <section class="card compact">
+            <h3>Phone Numbers <span class="badge" id="phoneCount">0</span></h3>
+            <textarea id="phoneNumbers" class="textarea" rows="6" placeholder="919876543210&#10;918765432109&#10;917654321098"></textarea>
+            <small class="hint">One per line, with country code</small>
+          </section>
+          <section class="card compact">
+            <h3>Message & Image</h3>
+            <textarea id="messageText" class="textarea" rows="3" placeholder="Type your message..."></textarea>
+            <div class="upload-row" id="uploadArea">
+              <input type="file" id="imageInput" accept="image/*" hidden>
+              <div class="upload-btn-area" id="uploadPlaceholder">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="#888"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                <span>Attach Image</span>
+              </div>
+              <div class="upload-preview" id="uploadPreview" style="display:none;">
+                <img id="previewImage" src="" alt="Preview">
+                <button class="btn btn-danger btn-xs" id="removeImage">&times;</button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <button class="btn btn-primary btn-send" id="sendBtn" disabled>
+          <span id="sendBtnText">Send Messages</span>
+          <span id="sendBtnLoader" class="spinner-sm" style="display:none;"></span>
+        </button>
+
+        <section class="card compact progress-section" id="progressSection" style="display:none;">
+          <div class="progress-top">
+            <h3>Progress</h3>
+            <div class="progress-stats">
+              <span class="stat-sent"><strong id="sentCount">0</strong> sent</span>
+              <span class="stat-failed"><strong id="failedCount">0</strong> failed</span>
+              <span class="stat-total"><strong id="totalCount">0</strong> total</span>
+            </div>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar" id="progressBar"></div>
+          </div>
+          <div class="log-container" id="logContainer"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Report Modal (opens report.html in an overlay, closing returns to dashboard) -->
+  <div id="reportModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:2000;">
+    <div style="position:absolute;inset:20px;background:#fff;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+      <iframe id="reportFrame" src="" style="flex:1;width:100%;border:none;"></iframe>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+  <script>
+    // Report modal open/close
+    (function() {
+      const overlay = document.getElementById('reportModalOverlay');
+      const frame = document.getElementById('reportFrame');
+      const openBtn = document.getElementById('openReportBtn');
+
+      openBtn.addEventListener('click', () => {
+        frame.src = '/report.html';       // load report inside iframe
+        overlay.style.display = 'block';
+      });
+
+      function closeReport() {
+        overlay.style.display = 'none';
+        frame.src = '';                    // unload to stop background activity
+      }
+
+      // The report page (inside iframe) sends this message when its X is clicked
+      window.addEventListener('message', (e) => {
+        if (e.data === 'closeReport') closeReport();
+      });
+      // Click outside the panel closes it
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) closeReport(); });
+      // Esc key closes it
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && overlay.style.display === 'block') closeReport();
+      });
+    })();
+  </script>
+</body>
+</html>
