@@ -16,7 +16,15 @@ const io = new Server(server);
 // When packaged with pkg, files must be written next to the EXE, not inside the
 // read-only snapshot. process.pkg is set when running as an EXE.
 const IS_PKG = typeof process.pkg !== 'undefined';
-const DATA_DIR = IS_PKG ? path.dirname(process.execPath) : __dirname;
+// DATA_DIR priority:
+//   1. DATA_DIR env var  -> used on hosts like Railway where a persistent
+//      volume is mounted (e.g. /data). Keeps WhatsApp auth + history alive
+//      across restarts/redeploys.
+//   2. next to the EXE when packaged with pkg
+//   3. project folder when run as a plain node script
+const DATA_DIR = process.env.DATA_DIR
+  ? process.env.DATA_DIR
+  : (IS_PKG ? path.dirname(process.execPath) : __dirname);
 // public folder: bundled inside snapshot when pkg, else local folder
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
@@ -907,13 +915,19 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   const url = `http://localhost:${PORT}`;
   console.log(`Server running on ${url}`);
-  console.log('Opening dashboard in your browser...');
 
-  // Auto-open the browser (works on Windows). Handy when run as an EXE.
-  try {
-    const { exec } = require('child_process');
-    if (process.platform === 'win32') exec(`start "" "${url}"`);
-    else if (process.platform === 'darwin') exec(`open "${url}"`);
-    else exec(`xdg-open "${url}"`);
-  } catch (e) { /* ignore - user can open manually */ }
+  // Auto-open the browser only when running locally as a desktop app / EXE.
+  // On a hosted server (Railway etc.) there is no browser and `start`/`open`
+  // would just throw, so skip it. We treat "hosted" as: PORT provided by the
+  // platform OR a DATA_DIR volume configured.
+  const isHosted = !!process.env.DATA_DIR || (!!process.env.PORT && !IS_PKG && process.platform !== 'win32');
+  if (!isHosted) {
+    console.log('Opening dashboard in your browser...');
+    try {
+      const { exec } = require('child_process');
+      if (process.platform === 'win32') exec(`start "" "${url}"`);
+      else if (process.platform === 'darwin') exec(`open "${url}"`);
+      else exec(`xdg-open "${url}"`);
+    } catch (e) { /* ignore - user can open manually */ }
+  }
 });
