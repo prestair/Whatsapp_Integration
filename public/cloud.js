@@ -33,14 +33,67 @@ function log(message, type = '') {
   cloudLog.prepend(div);
 }
 
+const loginScreen = document.getElementById('loginScreen');
+const appArea = document.getElementById('appArea');
+const logoutBtn = document.getElementById('logoutBtn');
+let workersTimer = null;
+
 function initSupabase() {
   if (!CFG.supabaseUrl || !CFG.supabaseAnonKey || !window.supabase) {
     document.getElementById('configError').style.display = 'block';
     setBadge('disconnected', 'Config missing');
     return false;
   }
-  supabase = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey);
+  supabase = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, {
+    auth: { persistSession: true, autoRefreshToken: true }
+  });
   return true;
+}
+
+function showLogin() {
+  loginScreen.style.display = 'block';
+  appArea.style.display = 'none';
+  logoutBtn.style.display = 'none';
+  setBadge('disconnected', 'Signed out');
+  if (workersTimer) { clearInterval(workersTimer); workersTimer = null; }
+  if (eventsChannel) { supabase.removeChannel(eventsChannel); eventsChannel = null; }
+}
+
+function showApp() {
+  loginScreen.style.display = 'none';
+  appArea.style.display = 'block';
+  logoutBtn.style.display = 'inline-block';
+  setBadge('connecting', 'Loading…');
+  loadWorkers();
+  if (!workersTimer) workersTimer = setInterval(loadWorkers, 10000);
+}
+
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+  if (!email || !password) { errEl.textContent = 'Email aur password daalein.'; errEl.style.display = 'block'; return; }
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  btn.disabled = false; btn.textContent = 'Sign in';
+  if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
+  document.getElementById('loginPassword').value = '';
+  // onAuthStateChange will switch to the app
+}
+
+async function initAuth() {
+  const { data } = await supabase.auth.getSession();
+  if (data.session) showApp(); else showLogin();
+
+  supabase.auth.onAuthStateChange((_event, session) => {
+    if (session) showApp(); else showLogin();
+  });
+
+  document.getElementById('loginBtn').addEventListener('click', doLogin);
+  document.getElementById('loginPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+  logoutBtn.addEventListener('click', async () => { await supabase.auth.signOut(); });
 }
 
 async function loadWorkers() {
@@ -186,8 +239,7 @@ document.getElementById('c_sendBtn').addEventListener('click', () => {
 
 function val(id) { return (document.getElementById(id).value || '').trim(); }
 
-// Boot
+// Boot: initialize Supabase, then gate everything behind auth.
 if (initSupabase()) {
-  loadWorkers();
-  setInterval(loadWorkers, 10000); // refresh device list + online status
+  initAuth();
 }
