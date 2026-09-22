@@ -75,6 +75,18 @@ app.use('/uploads', express.static(UPLOADS_DIR));
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 if (!fs.existsSync(PROFILES_DIR)) fs.mkdirSync(PROFILES_DIR, { recursive: true });
 
+// Baileys writes an encrypted temp file (via os.tmpdir()) before uploading media.
+// In some packaged-EXE / restricted environments the system temp dir is not
+// reliably writable, which surfaces as "Media upload failed on all hosts".
+// Point temp at a guaranteed-writable folder next to our data directory.
+const TMP_DIR = path.join(DATA_DIR, 'tmp');
+try {
+  if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
+  process.env.TMPDIR = TMP_DIR;
+  process.env.TMP = TMP_DIR;
+  process.env.TEMP = TMP_DIR;
+} catch (e) { /* fall back to system temp */ }
+
 // Multer config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOADS_DIR),
@@ -627,7 +639,7 @@ async function checkForNewEntries() {
           if (sheetConfig.imagePath) {
             const img = await resolveImageBuffer(sheetConfig.imagePath);
             if (img) {
-              await sock.sendMessage(jid, { image: img.buffer, mimetype: img.mimetype, caption: messageToSend });
+              await sendMessageWithRetry(jid, { image: img.buffer, mimetype: img.mimetype, caption: messageToSend });
             } else {
               await sock.sendMessage(jid, { text: messageToSend });
             }
@@ -862,6 +874,26 @@ async function resolveImageBuffer(imagePath) {
   return null;
 }
 
+// Send a WhatsApp message with automatic retry for transient media-upload
+// failures ("Media upload failed on all hosts"), which are usually temporary
+// network/timeout issues with WhatsApp's media servers.
+async function sendMessageWithRetry(jid, content, attempts = 3) {
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await sock.sendMessage(jid, content);
+    } catch (err) {
+      lastErr = err;
+      const msg = (err && err.message) || '';
+      const isMediaHostFail = /Media upload failed|failed on all hosts|Timed Out|timeout/i.test(msg);
+      if (!isMediaHostFail || attempt === attempts) throw err;
+      console.log(`[Send] Media upload attempt ${attempt} failed (${msg}); retrying in 3s...`);
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+  throw lastErr;
+}
+
 // Reusable manual bulk send (used by HTTP /api/send and Supabase send_message)
 async function sendBulk({ phoneNumbers, message, imagePath }) {
   if (!isConnected) throw new Error('WhatsApp not connected.');
@@ -876,7 +908,7 @@ async function sendBulk({ phoneNumbers, message, imagePath }) {
       if (imagePath) {
         const img = await resolveImageBuffer(imagePath);
         if (img) {
-          await sock.sendMessage(jid, { image: img.buffer, mimetype: img.mimetype, caption: message || '' });
+          await sendMessageWithRetry(jid, { image: img.buffer, mimetype: img.mimetype, caption: message || '' });
         } else if (message) {
           await sock.sendMessage(jid, { text: message });
         }
