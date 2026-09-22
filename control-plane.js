@@ -146,10 +146,13 @@ function createControlPlane({ workerId, workerName, onCommand, onLeaseExpired })
         ownerId
       };
     }
+    // owner_id is a uuid column; only accept a real UUID, else store null.
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const ownerUuid = (typeof ownerId === 'string' && uuidRe.test(ownerId)) ? ownerId : null;
     const session = {
       id: crypto.randomUUID(),
       worker_id: resolvedWorkerId,
-      owner_id: ownerId,
+      owner_id: ownerUuid,
       lease_token: crypto.randomBytes(24).toString('hex'),
       state: 'running',
       config,
