@@ -260,19 +260,30 @@ function createControlPlane({ workerId, workerName, onCommand, onLeaseExpired })
     }
   }
 
+  // Keep last_seen_at fresh so the dashboard reliably shows this worker online.
+  async function heartbeatWorker() {
+    await patchWorker({ status: 'online' });
+  }
+
+  let heartbeatTimer = null;
+
   function start() {
     if (!enabled || pollTimer) return;
     registerWorker().catch(err => console.error('[ControlPlane] Registration failed:', err.message));
     pollTimer = setInterval(pollCommands, pollMs);
     leaseTimer = setInterval(checkLease, Math.min(pollMs, 10000));
+    // Heartbeat every ~15s (dashboard treats <30s as online).
+    heartbeatTimer = setInterval(() => { heartbeatWorker().catch(() => {}); }, 15000);
     pollCommands();
   }
 
   async function stop() {
     if (pollTimer) clearInterval(pollTimer);
     if (leaseTimer) clearInterval(leaseTimer);
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     pollTimer = null;
     leaseTimer = null;
+    heartbeatTimer = null;
     if (enabled) await publishStatus('offline');
   }
 
