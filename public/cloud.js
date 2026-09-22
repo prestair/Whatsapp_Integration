@@ -364,7 +364,13 @@ async function loadWorkerConfig(workerId) {
 
 async function saveWorkerConfig(workerId, fields) {
   // Save to the shared global config so it prefills on every device.
-  await supabase.from('worker_configs').upsert({ worker_id: GLOBAL_CONFIG_ID, ...fields }, { onConflict: 'worker_id' });
+  // Never let a config-save failure block sending the actual command.
+  try {
+    const { error } = await supabase.from('worker_configs').upsert({ worker_id: GLOBAL_CONFIG_ID, ...fields }, { onConflict: 'worker_id' });
+    if (error) console.warn('Config save failed (non-blocking):', error.message);
+  } catch (e) {
+    console.warn('Config save error (non-blocking):', e.message);
+  }
 }
 
 // Tab switching within the panel
