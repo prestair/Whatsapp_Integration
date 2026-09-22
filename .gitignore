@@ -8,6 +8,15 @@ profiles/
 # App config with credentials / deployment URLs
 sheet_config.json
 
+# Environment secrets (Supabase service-role key etc.) — never commit
+.env
+.env.*
+!.env.example
+
+# Cloudflare tunnel credentials
+cloudflared-config.yml
+*.cloudflared/
+
 # Runtime data
 message_history.json
 uploads/

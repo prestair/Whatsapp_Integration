@@ -1,3 +1,4 @@
+try { require('dotenv').config(); } catch (e) { /* dotenv optional; ignore if absent */ }
 const express = require('express');
 // Baileys v7+ is ESM-only. We bundle the whole app into a single CommonJS file
 // with esbuild before packaging, so a normal require works here and esbuild
@@ -12,10 +13,17 @@ const fs = require('fs');
 const http = require('http');
 const { Server } = require('socket.io');
 const pino = require('pino');
+const { createControlPlane } = require('./control-plane');
 
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, {
+  cors: {
+    origin: CORS_ORIGIN === '*' ? true : CORS_ORIGIN.split(',').map(value => value.trim()),
+    methods: ['GET', 'POST', 'DELETE', 'OPTIONS']
+  }
+});
 
 // ===== Data directory (works both as node script and as packaged EXE) =====
 // When packaged with pkg, files must be written next to the EXE, not inside the
@@ -38,6 +46,18 @@ const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const PROFILES_DIR = path.join(DATA_DIR, 'profiles');
 
 // Middleware
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const allowed = CORS_ORIGIN === '*' || !origin || CORS_ORIGIN.split(',').map(value => value.trim()).includes(origin);
+  if (allowed) {
+    res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN === '*' ? '*' : origin || CORS_ORIGIN);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(PUBLIC_DIR));
@@ -101,6 +121,27 @@ let sheetConfig = {
 };
 let monitorInterval = null;
 let isChecking = false;
+let activeMonitorSession = null;
+let monitorLeaseTimer = null;
+
+const controlPlane = createControlPlane({
+  onCommand: async (command) => {
+    const payload = command.payload || {};
+    if (command.command_type === 'start_monitoring') {
+      await startMonitoring(payload, {
+        sessionId: command.session_id || payload.sessionId,
+        leaseToken: payload.leaseToken,
+        ownerId: command.owner_id || payload.ownerId || 'supabase'
+      });
+    } else if (command.command_type === 'stop_monitoring') {
+      await stopMonitoring('control-plane-command');
+    }
+  },
+  onLeaseExpired: async () => {
+    console.log('[Monitor] Supabase lease expired; stopping monitoring');
+    await stopMonitoring('lease-expired');
+  }
+});
 
 // ===== Message History Logging =====
 const HISTORY_FILE = path.join(DATA_DIR, 'message_history.json');
@@ -328,6 +369,7 @@ async function connectWhatsApp(profileName) {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       console.log(`[${profileName}] Connection closed. Status:`, statusCode);
+      controlPlane.publishStatus('offline', { profile: profileName, reason: statusCode }).catch(() => {});
       io.emit('disconnected', { message: 'Disconnected' });
       if (shouldReconnect) {
         console.log(`[${profileName}] Reconnecting...`);
@@ -346,6 +388,7 @@ async function connectWhatsApp(profileName) {
       console.log(`[${profileName}] WhatsApp connected! Number: ${loggedInNumber}`);
       isConnected = true;
       qrCodeData = null;
+      controlPlane.publishStatus('online', { profile: profileName, number: loggedInNumber }).catch(() => {});
       io.emit('ready', { message: 'WhatsApp connected!', profile: profileName, number: loggedInNumber });
     }
   });
@@ -599,6 +642,90 @@ async function checkForNewEntries() {
   }
 }
 
+async function startMonitoring(config, sessionMeta = {}) {
+  const {
+    sheetUrl, sheetTab, appsScriptUrl, phoneColumn, nameColumn,
+    statusColumn, dateColumn, message, imagePath, intervalSeconds
+  } = config;
+
+  if (!sheetUrl) throw new Error('Sheet URL required');
+  if (!phoneColumn) throw new Error('Phone column name required');
+  if (!message) throw new Error('Message required');
+  if (!isConnected) throw new Error('WhatsApp not connected');
+
+  const sheetId = extractSheetId(sheetUrl);
+  if (!sheetId) throw new Error('Invalid Google Sheet URL');
+
+  const data = await fetchSheetData(sheetUrl, sheetTab);
+  const phoneCol = phoneColumn.trim().toLowerCase();
+  const hasPhoneCol = data.headers.some(h => h.toLowerCase() === phoneCol);
+  if (!hasPhoneCol) {
+    throw new Error(`Column "${phoneColumn}" not found. Available: ${data.headers.join(', ')}`);
+  }
+
+  if (sheetConfig.isMonitoring) await stopMonitoring('replaced');
+
+  sheetConfig.processedRows = new Set();
+  sheetConfig.sheetUrl = sheetUrl;
+  sheetConfig.sheetTab = sheetTab || '';
+  sheetConfig.appsScriptUrl = appsScriptUrl || '';
+  sheetConfig.phoneColumn = phoneColumn;
+  sheetConfig.nameColumn = nameColumn || '';
+  sheetConfig.statusColumn = statusColumn || '';
+  sheetConfig.dateColumn = dateColumn || '';
+  sheetConfig.message = message;
+  sheetConfig.imagePath = imagePath || '';
+  sheetConfig.intervalSeconds = Math.max(5, Number(intervalSeconds) || 30);
+  sheetConfig.isMonitoring = true;
+
+  const session = sessionMeta.sessionId && sessionMeta.leaseToken
+    ? { sessionId: sessionMeta.sessionId, leaseToken: sessionMeta.leaseToken, ownerId: sessionMeta.ownerId || 'local' }
+    : await controlPlane.createSession({ ownerId: sessionMeta.ownerId || 'local', config: { ...config, intervalSeconds: sheetConfig.intervalSeconds } });
+  activeMonitorSession = { ...session, lastClientSeenAt: Date.now() };
+
+  if (monitorInterval) clearInterval(monitorInterval);
+  setTimeout(checkForNewEntries, 500);
+  monitorInterval = setInterval(checkForNewEntries, sheetConfig.intervalSeconds * 1000);
+  if (!monitorLeaseTimer) {
+    monitorLeaseTimer = setInterval(async () => {
+      if (!activeMonitorSession || !sheetConfig.isMonitoring) return;
+      if (!controlPlane.enabled && Date.now() - activeMonitorSession.lastClientSeenAt > controlPlane.leaseMs) {
+        await stopMonitoring('lease-expired');
+      }
+    }, 10000);
+  }
+
+  saveConfig();
+  await controlPlane.updateSessionState('running', { intervalSeconds: sheetConfig.intervalSeconds });
+  io.emit('sheet_status', { isMonitoring: true, sessionId: session.sessionId });
+  console.log(`[Sheet] Monitoring started. ${data.rows.length} existing rows marked. Checking every ${sheetConfig.intervalSeconds}s`);
+
+  return {
+    success: true,
+    message: `Monitoring started! ${data.rows.length} existing entries skipped. New entries will get WhatsApp message.`,
+    existingRows: data.rows.length,
+    headers: data.headers,
+    sessionId: session.sessionId,
+    leaseToken: session.leaseToken
+  };
+}
+
+async function stopMonitoring(reason = 'manual') {
+  sheetConfig.isMonitoring = false;
+  if (monitorInterval) {
+    clearInterval(monitorInterval);
+    monitorInterval = null;
+  }
+  const session = activeMonitorSession;
+  activeMonitorSession = null;
+  if (session) {
+    await controlPlane.updateSessionState('stopped', { reason });
+    await controlPlane.stopSession(session.sessionId, session.leaseToken, reason);
+  }
+  io.emit('sheet_status', { isMonitoring: false, reason });
+  console.log(`[Sheet] Monitoring stopped (${reason})`);
+}
+
 // ===== Socket.IO =====
 io.on('connection', (socket) => {
   console.log('Dashboard connected');
@@ -620,7 +747,8 @@ io.on('connection', (socket) => {
     message: sheetConfig.message,
     imagePath: sheetConfig.imagePath,
     intervalSeconds: sheetConfig.intervalSeconds,
-    processedCount: sheetConfig.processedRows.size
+    processedCount: sheetConfig.processedRows.size,
+    sessionId: activeMonitorSession?.sessionId || null
   });
 });
 
@@ -682,79 +810,36 @@ app.post('/api/send', async (req, res) => {
 
 // Start monitoring
 app.post('/api/sheet/start', async (req, res) => {
-  const { sheetUrl, sheetTab, appsScriptUrl, phoneColumn, nameColumn, statusColumn, dateColumn, message, imagePath, intervalSeconds } = req.body;
-
-  if (!sheetUrl) return res.status(400).json({ error: 'Sheet URL required' });
-  if (!phoneColumn) return res.status(400).json({ error: 'Phone column name required' });
-  if (!message) return res.status(400).json({ error: 'Message required' });
-  if (!isConnected) return res.status(400).json({ error: 'WhatsApp not connected' });
-
-  // Validate sheet URL
-  const sheetId = extractSheetId(sheetUrl);
-  if (!sheetId) return res.status(400).json({ error: 'Invalid Google Sheet URL' });
-
-  // Test fetch
   try {
-    const data = await fetchSheetData(sheetUrl, sheetTab);
-    const phoneCol = phoneColumn.trim().toLowerCase();
-    const hasPhoneCol = data.headers.some(h => h.toLowerCase() === phoneCol);
-    if (!hasPhoneCol) {
-      return res.status(400).json({
-        error: `Column "${phoneColumn}" not found. Available: ${data.headers.join(', ')}`
-      });
-    }
-
-    // Mark existing rows as processed (only send to NEW entries)
-    // Reset session tracking. Status column decides what to send:
-    // blank = send, any value (Sent/anything) = skip
-    sheetConfig.processedRows = new Set();
-
-    // Save config
-    sheetConfig.sheetUrl = sheetUrl;
-    sheetConfig.sheetTab = sheetTab || '';
-    sheetConfig.appsScriptUrl = appsScriptUrl || '';
-    sheetConfig.phoneColumn = phoneColumn;
-    sheetConfig.nameColumn = nameColumn || '';
-    sheetConfig.statusColumn = statusColumn || '';
-    sheetConfig.dateColumn = dateColumn || '';
-    sheetConfig.message = message;
-    sheetConfig.imagePath = imagePath || '';
-    sheetConfig.intervalSeconds = intervalSeconds || 30;
-    sheetConfig.isMonitoring = true;
-
-    // Start polling
-    if (monitorInterval) clearInterval(monitorInterval);
-    // Run the first check immediately (don't wait for the interval)
-    setTimeout(checkForNewEntries, 500);
-    monitorInterval = setInterval(checkForNewEntries, sheetConfig.intervalSeconds * 1000);
-
-    // Save config for next time
-    saveConfig();
-
-    console.log(`[Sheet] Monitoring started. ${data.rows.length} existing rows marked. Checking every ${sheetConfig.intervalSeconds}s`);
-
-    res.json({
-      success: true,
-      message: `Monitoring started! ${data.rows.length} existing entries skipped. New entries will get WhatsApp message.`,
-      existingRows: data.rows.length,
-      headers: data.headers
+    const result = await startMonitoring(req.body, {
+      ownerId: req.body.ownerId || 'local'
     });
-
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// Test sheet update
-// Stop monitoring
-app.post('/api/sheet/stop', (req, res) => {
-  sheetConfig.isMonitoring = false;
-  if (monitorInterval) {
-    clearInterval(monitorInterval);
-    monitorInterval = null;
+// Refresh the browser-owned monitor lease. Closing the page triggers a
+// best-effort stop, while this heartbeat handles normal long-running sessions.
+app.post('/api/sheet/heartbeat', async (req, res) => {
+  const { sessionId, leaseToken } = req.body || {};
+  if (!activeMonitorSession || activeMonitorSession.sessionId !== sessionId || activeMonitorSession.leaseToken !== leaseToken) {
+    return res.status(409).json({ error: 'Monitor session is no longer active' });
   }
-  io.emit('sheet_status', { isMonitoring: false });
-  console.log('[Sheet] Monitoring stopped');
+  const accepted = await controlPlane.heartbeat(sessionId, leaseToken);
+  if (!accepted) return res.status(409).json({ error: 'Monitor lease is invalid or expired' });
+  activeMonitorSession.lastClientSeenAt = Date.now();
+  res.json({ success: true });
+});
+
+// Stop monitoring
+app.post('/api/sheet/stop', async (req, res) => {
+  const { sessionId, leaseToken } = req.body || {};
+  if (sessionId && activeMonitorSession && (sessionId !== activeMonitorSession.sessionId || leaseToken !== activeMonitorSession.leaseToken)) {
+    return res.status(409).json({ error: 'Monitor session does not belong to this client' });
+  }
+  await stopMonitoring(req.body?.reason || 'manual');
   res.json({ success: true, message: 'Monitoring stopped' });
 });
 
@@ -772,7 +857,8 @@ app.get('/api/sheet/status', (req, res) => {
     message: sheetConfig.message,
     imagePath: sheetConfig.imagePath,
     intervalSeconds: sheetConfig.intervalSeconds,
-    processedCount: sheetConfig.processedRows.size
+    processedCount: sheetConfig.processedRows.size,
+    sessionId: activeMonitorSession?.sessionId || null
   });
 });
 
@@ -921,6 +1007,7 @@ app.delete('/api/profiles/:name', (req, res) => {
 // Start server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
+  controlPlane.start();
   const url = `http://localhost:${PORT}`;
   console.log(`Server running on ${url}`);
 
@@ -938,4 +1025,18 @@ server.listen(PORT, () => {
       else exec(`xdg-open "${url}"`);
     } catch (e) { /* ignore - user can open manually */ }
   }
+});
+
+process.on('SIGINT', async () => {
+  await stopMonitoring('process-shutdown');
+  await controlPlane.stop();
+  try { sock?.end(); } catch (e) {}
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  await stopMonitoring('process-shutdown');
+  await controlPlane.stop();
+  try { sock?.end(); } catch (e) {}
+  process.exit(0);
 });

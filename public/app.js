@@ -1,5 +1,6 @@
-// Socket.IO connection
-const socket = io();
+const BACKEND_URL = (window.APP_CONFIG?.backendUrl || '').replace(/\/$/, '');
+const apiFetch = (path, options) => fetch(`${BACKEND_URL}${path}`, options);
+const socket = io(BACKEND_URL || undefined);
 
 // ===== DOM Elements =====
 const statusBadge = document.getElementById('statusBadge');
@@ -66,6 +67,8 @@ let sheetImagePath = null;
 let isSending = false;
 let sheetNewSentCount = 0;
 let sheetFailedCount = 0;
+let monitorSession = null;
+let monitorHeartbeatTimer = null;
 
 // ===== Tabs =====
 document.querySelectorAll('.tab').forEach(tab => {
@@ -216,7 +219,7 @@ imageInput.addEventListener('change', async (e) => {
   const formData = new FormData();
   formData.append('image', file);
   try {
-    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    const res = await apiFetch('/api/upload', { method: 'POST', body: formData });
     const data = await res.json();
     if (data.success) { uploadedImagePath = data.path; updateSendButton(); }
     else alert('Upload failed: ' + (data.error || 'Unknown'));
@@ -252,7 +255,7 @@ sendBtn.addEventListener('click', async () => {
   logContainer.innerHTML = '';
 
   try {
-    const res = await fetch('/api/send', {
+    const res = await apiFetch('/api/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phoneNumbers: numbers, message, imagePath: uploadedImagePath })
@@ -291,7 +294,7 @@ sheetImageInput.addEventListener('change', async (e) => {
   const formData = new FormData();
   formData.append('image', file);
   try {
-    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    const res = await apiFetch('/api/upload', { method: 'POST', body: formData });
     const data = await res.json();
     if (data.success) sheetImagePath = data.path;
     else alert('Upload failed: ' + (data.error || 'Unknown'));
@@ -307,6 +310,42 @@ sheetRemoveImage.addEventListener('click', (e) => {
   sheetUploadPreview.style.display = 'none';
 });
 
+function stopMonitorHeartbeat() {
+  if (monitorHeartbeatTimer) clearInterval(monitorHeartbeatTimer);
+  monitorHeartbeatTimer = null;
+}
+
+function startMonitorHeartbeat() {
+  stopMonitorHeartbeat();
+  monitorHeartbeatTimer = setInterval(async () => {
+    if (!monitorSession) return;
+    try {
+      const res = await apiFetch('/api/sheet/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(monitorSession)
+      });
+      if (!res.ok) {
+        monitorSession = null;
+        stopMonitorHeartbeat();
+      }
+    } catch (err) {
+      console.warn('Monitor heartbeat failed:', err.message);
+    }
+  }, 15000);
+}
+
+function sendMonitorStopBeacon(reason) {
+  if (!monitorSession) return;
+  const body = JSON.stringify({ ...monitorSession, reason });
+  const blob = new Blob([body], { type: 'application/json' });
+  navigator.sendBeacon(`${BACKEND_URL}/api/sheet/stop`, blob);
+  monitorSession = null;
+  stopMonitorHeartbeat();
+}
+
+window.addEventListener('pagehide', () => sendMonitorStopBeacon('frontend-closed'));
+
 // Start monitoring
 startMonitorBtn.addEventListener('click', async () => {
   const url = sheetUrl.value.trim();
@@ -321,7 +360,7 @@ startMonitorBtn.addEventListener('click', async () => {
   startMonitorBtn.textContent = 'Starting...';
 
   try {
-    const res = await fetch('/api/sheet/start', {
+    const res = await apiFetch('/api/sheet/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -340,7 +379,10 @@ startMonitorBtn.addEventListener('click', async () => {
     const data = await res.json();
 
     if (data.success) {
-      sheetStatusSection.style.display = 'block';
+      monitorSession = data.sessionId && data.leaseToken
+        ? { sessionId: data.sessionId, leaseToken: data.leaseToken }
+        : null;
+      if (monitorSession) startMonitorHeartbeat();
       sheetNewSentCount = 0;
       sheetFailedCount = 0;
       sheetProcessed.textContent = '0';
@@ -368,7 +410,13 @@ startMonitorBtn.addEventListener('click', async () => {
 // Stop monitoring
 stopMonitorBtn.addEventListener('click', async () => {
   try {
-    await fetch('/api/sheet/stop', { method: 'POST' });
+    await apiFetch('/api/sheet/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(monitorSession || {})
+    });
+    monitorSession = null;
+    stopMonitorHeartbeat();
     sheetStatusSection.style.display = 'none';
     startMonitorBtn.disabled = false;
     startMonitorBtn.textContent = 'Start Monitoring';
@@ -382,7 +430,7 @@ stopMonitorBtn.addEventListener('click', async () => {
 // Logout
 logoutBtn.addEventListener('click', async () => {
   if (confirm('Log out from WhatsApp?')) {
-    try { await fetch('/api/logout', { method: 'POST' }); }
+    try { await apiFetch('/api/logout', { method: 'POST' }); }
     catch (err) { console.error(err); }
   }
 });
@@ -402,7 +450,7 @@ connectProfileBtn.addEventListener('click', async () => {
   connectProfileBtn.textContent = 'Connecting...';
 
   try {
-    const res = await fetch('/api/profiles/connect', {
+    const res = await apiFetch('/api/profiles/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profileName: name })
@@ -424,7 +472,7 @@ connectProfileBtn.addEventListener('click', async () => {
 
 async function loadProfiles() {
   try {
-    const res = await fetch('/api/profiles');
+    const res = await apiFetch('/api/profiles');
     const data = await res.json();
     activeProfileName.textContent = data.activeProfile;
 
@@ -445,7 +493,7 @@ async function loadProfiles() {
     profileList.querySelectorAll('.switch-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const name = btn.dataset.name;
-        const res = await fetch('/api/profiles/connect', {
+        const res = await apiFetch('/api/profiles/connect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ profileName: name })
@@ -460,7 +508,7 @@ async function loadProfiles() {
       btn.addEventListener('click', async () => {
         const name = btn.dataset.delete;
         if (!confirm(`Delete profile "${name}"?`)) return;
-        await fetch('/api/profiles/' + encodeURIComponent(name), { method: 'DELETE' });
+        await apiFetch('/api/profiles/' + encodeURIComponent(name), { method: 'DELETE' });
         loadProfiles();
       });
     });
@@ -470,7 +518,7 @@ async function loadProfiles() {
 }
 
 // Initial status
-fetch('/api/status').then(r => r.json()).then(data => {
+apiFetch('/api/status').then(r => r.json()).then(data => {
   if (data.connected) {
     updateStatus('connected', 'Connected');
     qrSection.style.display = 'none';
@@ -481,7 +529,7 @@ fetch('/api/status').then(r => r.json()).then(data => {
   }
 }).catch(() => {});
 
-fetch('/api/sheet/status').then(r => r.json()).then(data => {
+apiFetch('/api/sheet/status').then(r => r.json()).then(data => {
   // Prefill saved values
   if (data.sheetUrl) sheetUrl.value = data.sheetUrl;
   if (data.sheetTab) sheetTabName.value = data.sheetTab;
@@ -498,12 +546,16 @@ fetch('/api/sheet/status').then(r => r.json()).then(data => {
     sheetImagePath = data.imagePath;
     // Build a browser URL from the stored server path (uploads/xxxx.png -> /uploads/xxxx.png)
     const fileName = data.imagePath.replace(/\\/g, '/').split('/').pop();
-    sheetPreviewImage.src = '/uploads/' + fileName;
+    sheetPreviewImage.src = `${BACKEND_URL}/uploads/${fileName}`;
     sheetUploadPlaceholder.style.display = 'none';
     sheetUploadPreview.style.display = 'block';
   }
 
   if (data.isMonitoring) {
+    if (data.sessionId && data.leaseToken) {
+      monitorSession = { sessionId: data.sessionId, leaseToken: data.leaseToken };
+      startMonitorHeartbeat();
+    }
     sheetStatusSection.style.display = 'block';
     startMonitorBtn.textContent = 'Running...';
     startMonitorBtn.disabled = true;

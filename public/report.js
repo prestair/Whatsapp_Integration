@@ -1,4 +1,6 @@
-const fromDate = document.getElementById('fromDate');
+const BACKEND_URL = (window.APP_CONFIG?.backendUrl || '').replace(/\/$/, '');
+const apiFetch = (path, options) => fetch(`${BACKEND_URL}${path}`, options);
+
 const toDate = document.getElementById('toDate');
 const statusFilter = document.getElementById('statusFilter');
 const sourceFilter = document.getElementById('sourceFilter');
@@ -23,7 +25,7 @@ async function loadHistory() {
   if (sourceFilter.value) params.append('source', sourceFilter.value);
 
   try {
-    const res = await fetch('/api/history?' + params.toString());
+    const res = await apiFetch('/api/history?' + params.toString());
     const data = await res.json();
     currentRecords = data.records || [];
 
@@ -221,7 +223,7 @@ if (clearBtn) {
   clearBtn.addEventListener('click', async () => {
     if (!confirm('Delete the entire message history?\n\nThis data cannot be restored.')) return;
     try {
-      await fetch('/api/history', { method: 'DELETE' });
+      await apiFetch('/api/history', { method: 'DELETE' });
       loadHistory();
     } catch (err) {
       alert('Error: ' + err.message);
@@ -251,7 +253,7 @@ deleteBeforeBtn.addEventListener('click', async () => {
   if (!confirmed) return;
 
   try {
-    const res = await fetch('/api/history/before?date=' + encodeURIComponent(date), { method: 'DELETE' });
+    const res = await apiFetch('/api/history/before?date=' + encodeURIComponent(date), { method: 'DELETE' });
     const data = await res.json();
     if (data.success) {
       alert(`${data.deleted} record(s) deleted. ${data.remaining} record(s) remaining.`);
