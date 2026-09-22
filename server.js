@@ -417,7 +417,10 @@ async function connectWhatsApp(profileName) {
   sock = makeWASocket({
     auth: state,
     printQRInTerminal: true,
-    logger: pino({ level: 'silent' })
+    // 'warn' surfaces Baileys' per-host media upload warnings so we can see the
+    // real reason behind "Media upload failed on all hosts". Set LOG_LEVEL to
+    // change (e.g. 'silent' for quiet, 'debug' for verbose).
+    logger: pino({ level: process.env.LOG_LEVEL || 'warn' })
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -904,6 +907,10 @@ async function sendMessageWithRetry(jid, content, attempts = 3) {
     } catch (err) {
       lastErr = err;
       const msg = (err && err.message) || '';
+      // Detailed diagnostics so we can see the REAL cause behind "failed on all hosts".
+      console.log(`[Send][diag] attempt ${attempt} error: ${msg}`);
+      if (err?.stack) console.log(`[Send][diag] stack: ${err.stack.split('\n').slice(0, 4).join(' | ')}`);
+      if (err?.output) { try { console.log(`[Send][diag] output: ${JSON.stringify(err.output)}`); } catch (e) {} }
       const isMediaHostFail = /Media upload failed|failed on all hosts|Timed Out|timeout/i.test(msg);
       if (!isMediaHostFail || attempt === attempts) throw err;
       console.log(`[Send] Media upload attempt ${attempt} failed (${msg}); retrying in 3s...`);
