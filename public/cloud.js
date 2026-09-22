@@ -129,14 +129,46 @@ function renderWorkers() {
     const online = isOnline(w);
     const item = document.createElement('div');
     item.className = 'worker-item' + (w.id === selectedWorkerId ? ' active' : '');
+    const delBtn = online
+      ? `<button class="worker-del" title="Online device delete nahi kar sakte — pehle us computer par worker band karein" disabled
+          style="border:none;background:transparent;color:#ccc;font-size:18px;cursor:not-allowed;padding:0 6px;line-height:1;">&times;</button>`
+      : `<button class="worker-del" title="Delete device" data-del="${escapeHtml(w.id)}"
+          style="border:none;background:transparent;color:#c0392b;font-size:18px;cursor:pointer;padding:0 6px;line-height:1;">&times;</button>`;
     item.innerHTML = `
-      <div>
+      <div style="flex:1;min-width:0;">
         <div class="wname"><span class="dot ${online ? 'online' : 'offline'}"></span>${escapeHtml(w.display_name || w.id)}</div>
         <div class="wmeta">${w.wa_connected ? 'WhatsApp: ' + escapeHtml(w.wa_number || 'connected') : (online ? 'needs QR scan' : 'offline')}</div>
-      </div>`;
-    item.addEventListener('click', () => selectWorker(w.id));
+      </div>
+      ${delBtn}`;
+    const delEl = item.querySelector('[data-del]');
+    if (delEl) {
+      delEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteWorker(w);
+      });
+    }
+    item.querySelector('.wname').parentElement.addEventListener('click', () => selectWorker(w.id));
     workerListEl.appendChild(item);
   });
+}
+
+async function deleteWorker(w) {
+  if (isOnline(w)) {
+    alert('Ye device abhi ONLINE hai. Pehle us computer par worker band karein, phir delete karein.');
+    return;
+  }
+  const msg = `Delete device "${w.display_name || w.id}"?\n\nIsse device ka status/QR record hat jayega (message history nahi).`;
+  if (!confirm(msg)) return;
+  const { error } = await supabase.from('worker_instances').delete().eq('id', w.id);
+  if (error) { alert('Delete failed: ' + error.message); return; }
+  if (selectedWorkerId === w.id) {
+    selectedWorkerId = null;
+    if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null; }
+    renderPanel();
+  }
+  workers = workers.filter(x => x.id !== w.id);
+  renderWorkers();
+  log(`Device deleted: ${w.display_name || w.id}`, 'success');
 }
 
 function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t == null ? '' : t; return d.innerHTML; }
