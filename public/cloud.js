@@ -79,7 +79,7 @@ async function doLogin() {
   const password = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
   errEl.style.display = 'none';
-  if (!email || !password) { errEl.textContent = 'Email aur password daalein.'; errEl.style.display = 'block'; return; }
+  if (!email || !password) { errEl.textContent = 'Please enter your email and password.'; errEl.style.display = 'block'; return; }
   const btn = document.getElementById('loginBtn');
   btn.disabled = true; btn.textContent = 'Signing in…';
   const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -130,7 +130,7 @@ function renderWorkers() {
     const item = document.createElement('div');
     item.className = 'worker-item' + (w.id === selectedWorkerId ? ' active' : '');
     const delBtn = online
-      ? `<button class="worker-del" title="Online device delete nahi kar sakte — pehle us computer par worker band karein" disabled
+      ? `<button class="worker-del" title="Cannot delete an online device. Please stop the worker on that computer first." disabled
           style="border:none;background:transparent;color:#ccc;font-size:18px;cursor:not-allowed;padding:0 6px;line-height:1;">&times;</button>`
       : `<button class="worker-del" title="Delete device" data-del="${escapeHtml(w.id)}"
           style="border:none;background:transparent;color:#c0392b;font-size:18px;cursor:pointer;padding:0 6px;line-height:1;">&times;</button>`;
@@ -154,10 +154,10 @@ function renderWorkers() {
 
 async function deleteWorker(w) {
   if (isOnline(w)) {
-    alert('Ye device abhi ONLINE hai. Pehle us computer par worker band karein, phir delete karein.');
+    alert('This device is currently ONLINE. Please stop the worker on that computer before deleting it.');
     return;
   }
-  const msg = `Delete device "${w.display_name || w.id}"?\n\nIsse device ka status/QR record hat jayega (message history nahi).`;
+  const msg = `Delete device "${w.display_name || w.id}"?\n\nThis removes the device's status/QR record only. Message history is not affected.`;
   if (!confirm(msg)) return;
   const { error } = await supabase.from('worker_instances').delete().eq('id', w.id);
   if (error) { alert('Delete failed: ' + error.message); return; }
@@ -219,7 +219,7 @@ function renderPanel() {
   } else {
     // Online but QR not fetched yet — show generating message and fetch it.
     qrArea.style.display = 'block';
-    qrImg.innerHTML = '<div style="padding:40px;color:#667;">QR generate ho raha hai… (thodी der wait karein)</div>';
+    qrImg.innerHTML = '<div style="padding:40px;color:#667;">Generating QR code… please wait a moment.</div>';
     connectedArea.style.display = 'none';
   }
 }
@@ -253,7 +253,7 @@ function subscribeEvents(workerId) {
 async function sendCommand(commandType, payload) {
   const w = currentWorker();
   if (!w) return alert('Select a device first.');
-  if (!isOnline(w)) return alert('Ye device abhi offline hai. Us computer par worker EXE chalu karein.');
+  if (!isOnline(w)) return alert('This device is currently offline. Please start the worker application on that computer.');
   const { error } = await supabase.from('monitor_commands').insert({
     worker_id: w.id,
     command_type: commandType,
@@ -378,9 +378,9 @@ document.getElementById('c_startBtn').addEventListener('click', async () => {
     batchSize: parseInt(val('c_batchSize')) || 5,
     batchGapSeconds: val('c_batchGap') === '' ? 10 : parseInt(val('c_batchGap'))
   };
-  if (!payload.sheetUrl) return alert('Sheet link daalein.');
-  if (!payload.phoneColumn) return alert('Phone column daalein.');
-  if (!payload.message) return alert('Message daalein.');
+  if (!payload.sheetUrl) return alert('Please enter the Google Sheet link.');
+  if (!payload.phoneColumn) return alert('Please enter the phone column name.');
+  if (!payload.message) return alert('Please enter a message.');
   if (w) {
     await saveWorkerConfig(w.id, {
       sheet_url: payload.sheetUrl, sheet_tab: payload.sheetTab, apps_script_url: payload.appsScriptUrl,
@@ -399,8 +399,8 @@ document.getElementById('c_sendBtn').addEventListener('click', async () => {
   const w = currentWorker();
   const numbers = val('c_numbers').split('\n').map(n => n.trim()).filter(Boolean);
   const message = val('c_manualMsg');
-  if (!numbers.length) return alert('Phone numbers daalein.');
-  if (!message) return alert('Message daalein.');
+  if (!numbers.length) return alert('Please enter phone numbers.');
+  if (!message) return alert('Please enter a message.');
   if (!confirm(`Send to ${numbers.length} number(s)?`)) return;
   if (w) {
     await saveWorkerConfig(w.id, { manual_message: message, manual_image_path: manualUploadedImagePath || '' });
@@ -421,7 +421,7 @@ function showBootError(msg) {
 (async function boot() {
   try {
     if (!window.supabase || !window.supabase.createClient) {
-      return showBootError('Supabase SDK load nahi hua (internet/CDN block?). Page refresh karein.');
+      return showBootError('Failed to load the Supabase SDK (internet/CDN blocked?). Please refresh the page.');
     }
     if (!initSupabase()) return; // shows "Config missing"
     await initAuth();
