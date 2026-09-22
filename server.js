@@ -22,6 +22,24 @@ const { Server } = require('socket.io');
 const pino = require('pino');
 const { createControlPlane } = require('./control-plane');
 const { resolveWorkerIdentity } = require('./worker-identity');
+// jimp is pure-JavaScript (no native binary), so it works inside the packaged
+// EXE where sharp's native module is unavailable. We use it to pre-generate the
+// image thumbnail ourselves so Baileys never needs sharp during media upload.
+let Jimp = null;
+try { Jimp = require('jimp').Jimp; } catch (e) { /* optional */ }
+
+async function makeJpegThumbnail(buffer) {
+  if (!Jimp) return undefined;
+  try {
+    const img = await Jimp.read(buffer);
+    img.resize({ w: 72 });
+    // jimp v1 returns a base64 data URL from getBase64; we need raw base64.
+    const b64 = await img.getBase64('image/jpeg');
+    return b64.split(',')[1];
+  } catch (e) {
+    return undefined;
+  }
+}
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const app = express();
@@ -639,7 +657,8 @@ async function checkForNewEntries() {
           if (sheetConfig.imagePath) {
             const img = await resolveImageBuffer(sheetConfig.imagePath);
             if (img) {
-              await sendMessageWithRetry(jid, { image: img.buffer, mimetype: img.mimetype, caption: messageToSend });
+              const jpegThumbnail = await makeJpegThumbnail(img.buffer);
+              await sendMessageWithRetry(jid, { image: img.buffer, mimetype: img.mimetype, caption: messageToSend, jpegThumbnail });
             } else {
               await sock.sendMessage(jid, { text: messageToSend });
             }
@@ -908,7 +927,8 @@ async function sendBulk({ phoneNumbers, message, imagePath }) {
       if (imagePath) {
         const img = await resolveImageBuffer(imagePath);
         if (img) {
-          await sendMessageWithRetry(jid, { image: img.buffer, mimetype: img.mimetype, caption: message || '' });
+          const jpegThumbnail = await makeJpegThumbnail(img.buffer);
+          await sendMessageWithRetry(jid, { image: img.buffer, mimetype: img.mimetype, caption: message || '', jpegThumbnail });
         } else if (message) {
           await sock.sendMessage(jid, { text: message });
         }
