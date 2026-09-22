@@ -138,7 +138,7 @@ function createControlPlane({ workerId, workerName, onCommand, onLeaseExpired })
     }
   }
 
-  async function createSession({ ownerId = 'local', config = {} } = {}) {
+  async function createSession({ ownerId = 'local', config = {}, noLease = false } = {}) {
     if (!enabled) {
       return {
         sessionId: crypto.randomUUID(),
@@ -163,7 +163,7 @@ function createControlPlane({ workerId, workerName, onCommand, onLeaseExpired })
       method: 'POST',
       body: JSON.stringify(session)
     });
-    currentSession = { ...session, ...(rows?.[0] || {}) };
+    currentSession = { ...session, ...(rows?.[0] || {}), noLease };
     return {
       sessionId: currentSession.id,
       leaseToken: currentSession.lease_token,
@@ -250,6 +250,7 @@ function createControlPlane({ workerId, workerName, onCommand, onLeaseExpired })
   async function checkLease() {
     if (!currentSession || currentSession.state !== 'running') return;
     if (!enabled) return;
+    if (currentSession.noLease) return; // one-shot cloud command sessions don't heartbeat
     try {
       const rows = await request(`monitor_sessions?id=eq.${encodeURIComponent(currentSession.id)}&state=eq.running&select=last_client_seen_at`, { method: 'GET' });
       const lastSeen = rows?.[0]?.last_client_seen_at;

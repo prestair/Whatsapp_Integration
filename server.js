@@ -141,10 +141,12 @@ const controlPlane = createControlPlane({
   onCommand: async (command) => {
     const payload = command.payload || {};
     if (command.command_type === 'start_monitoring') {
+      // Cloud dashboard commands are one-shot (no continuous heartbeat like
+      // the local browser sends), so this session must not be lease-expired.
+      // It only stops on an explicit stop_monitoring command.
       await startMonitoring(payload, {
-        sessionId: command.session_id || payload.sessionId,
-        leaseToken: payload.leaseToken,
-        ownerId: command.owner_id || payload.ownerId || 'supabase'
+        ownerId: command.owner_id || payload.ownerId || 'supabase',
+        noLease: true
       });
     } else if (command.command_type === 'stop_monitoring') {
       await stopMonitoring('control-plane-command');
@@ -621,9 +623,8 @@ async function checkForNewEntries() {
           const jid = result.jid;
 
           if (sheetConfig.imagePath) {
-            const fullPath = path.resolve(sheetConfig.imagePath);
-            if (fs.existsSync(fullPath)) {
-              const imageBuffer = fs.readFileSync(fullPath);
+            const imageBuffer = await resolveImageBuffer(sheetConfig.imagePath);
+            if (imageBuffer) {
               await sock.sendMessage(jid, { image: imageBuffer, caption: messageToSend });
             } else {
               await sock.sendMessage(jid, { text: messageToSend });
@@ -717,8 +718,12 @@ async function startMonitoring(config, sessionMeta = {}) {
 
   const session = sessionMeta.sessionId && sessionMeta.leaseToken
     ? { sessionId: sessionMeta.sessionId, leaseToken: sessionMeta.leaseToken, ownerId: sessionMeta.ownerId || 'local' }
-    : await controlPlane.createSession({ ownerId: sessionMeta.ownerId || 'local', config: { ...config, intervalSeconds: sheetConfig.intervalSeconds } });
-  activeMonitorSession = { ...session, lastClientSeenAt: Date.now() };
+    : await controlPlane.createSession({
+        ownerId: sessionMeta.ownerId || 'local',
+        config: { ...config, intervalSeconds: sheetConfig.intervalSeconds },
+        noLease: !!sessionMeta.noLease
+      });
+  activeMonitorSession = { ...session, lastClientSeenAt: Date.now(), noLease: !!sessionMeta.noLease };
 
   if (monitorInterval) clearInterval(monitorInterval);
   setTimeout(checkForNewEntries, 500);
@@ -800,6 +805,38 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
   res.json({ success: true, filename: req.file.filename, path: req.file.path });
 });
 
+// Resolve an image reference to a Buffer. Supports:
+//  - Local filesystem path (legacy: images uploaded via /api/upload)
+//  - Supabase Storage public/signed URL (https://...supabase.co/storage/v1/object/...)
+//  - Supabase Storage bucket path "message-images/<file>" (downloaded via service key)
+async function resolveImageBuffer(imagePath) {
+  if (!imagePath) return null;
+
+  // Supabase Storage bucket-relative path, e.g. "message-images/abc.jpg"
+  if (imagePath.startsWith('message-images/') && controlPlane.enabled) {
+    const supaUrl = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const objectPath = imagePath.replace(/^message-images\//, '');
+    const res = await fetch(`${supaUrl}/storage/v1/object/message-images/${encodeURI(objectPath)}`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` }
+    });
+    if (!res.ok) throw new Error(`Image download failed: ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  // Any absolute Supabase/HTTP(S) URL (e.g. a signed URL from the dashboard)
+  if (/^https?:\/\//i.test(imagePath)) {
+    const res = await fetch(imagePath);
+    if (!res.ok) throw new Error(`Image download failed: ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  // Legacy local filesystem path
+  const fullPath = path.resolve(imagePath);
+  if (fs.existsSync(fullPath)) return fs.readFileSync(fullPath);
+  return null;
+}
+
 // Reusable manual bulk send (used by HTTP /api/send and Supabase send_message)
 async function sendBulk({ phoneNumbers, message, imagePath }) {
   if (!isConnected) throw new Error('WhatsApp not connected.');
@@ -812,9 +849,8 @@ async function sendBulk({ phoneNumbers, message, imagePath }) {
     const jid = phone + '@s.whatsapp.net';
     try {
       if (imagePath) {
-        const fullPath = path.resolve(imagePath);
-        if (fs.existsSync(fullPath)) {
-          const imageBuffer = fs.readFileSync(fullPath);
+        const imageBuffer = await resolveImageBuffer(imagePath);
+        if (imageBuffer) {
           await sock.sendMessage(jid, { image: imageBuffer, caption: message || '' });
         } else if (message) {
           await sock.sendMessage(jid, { text: message });

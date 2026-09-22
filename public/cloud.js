@@ -157,6 +157,7 @@ function selectWorker(id) {
   renderWorkers();
   renderPanel();
   subscribeEvents(id);
+  loadWorkerConfig(id).catch(err => console.warn('Load config failed:', err.message));
   // Poll the selected device every 3s so QR/connection state stays fresh
   // even if a realtime UPDATE omits the large qr_data column.
   if (qrPollTimer) clearInterval(qrPollTimer);
@@ -226,6 +227,98 @@ async function sendCommand(commandType, payload) {
   else log(`Command sent: ${commandType}`, 'success');
 }
 
+// ===== Image upload to Supabase Storage (private 'message-images' bucket) =====
+let uploadedImagePath = '';
+let manualUploadedImagePath = '';
+
+async function uploadImage(file) {
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+  const objectPath = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { error } = await supabase.storage.from('message-images').upload(objectPath, file, {
+    contentType: file.type || 'image/jpeg',
+    upsert: false
+  });
+  if (error) throw error;
+  return 'message-images/' + objectPath;
+}
+
+function wireImageInput({ inputId, boxId, previewId, removeId, statusId, setPath }) {
+  const input = document.getElementById(inputId);
+  const box = document.getElementById(boxId);
+  const preview = document.getElementById(previewId);
+  const removeBtn = document.getElementById(removeId);
+  const statusEl = document.getElementById(statusId);
+
+  input.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    statusEl.textContent = 'Uploading…';
+    const reader = new FileReader();
+    reader.onload = (ev) => { preview.src = ev.target.result; box.style.display = 'block'; };
+    reader.readAsDataURL(file);
+    try {
+      const bucketPath = await uploadImage(file);
+      setPath(bucketPath);
+      statusEl.textContent = 'Image ready ✓';
+    } catch (err) {
+      statusEl.textContent = 'Upload failed: ' + err.message;
+      setPath('');
+    }
+  });
+
+  removeBtn.addEventListener('click', () => {
+    input.value = '';
+    preview.src = '';
+    box.style.display = 'none';
+    statusEl.textContent = '';
+    setPath('');
+  });
+
+  return {
+    setPreviewFromPath: async (bucketPath) => {
+      if (!bucketPath) { box.style.display = 'none'; statusEl.textContent = ''; return; }
+      const objectName = bucketPath.replace(/^message-images\//, '');
+      const { data } = await supabase.storage.from('message-images').createSignedUrl(objectName, 3600);
+      if (data?.signedUrl) { preview.src = data.signedUrl; box.style.display = 'block'; statusEl.textContent = 'Saved image ✓'; }
+    }
+  };
+}
+
+const sheetImageCtl = wireImageInput({
+  inputId: 'c_imageInput', boxId: 'c_imagePreviewBox', previewId: 'c_imagePreview',
+  removeId: 'c_imageRemoveBtn', statusId: 'c_imageStatus',
+  setPath: (p) => { uploadedImagePath = p; }
+});
+const manualImageCtl = wireImageInput({
+  inputId: 'c_manualImageInput', boxId: 'c_manualImagePreviewBox', previewId: 'c_manualImagePreview',
+  removeId: 'c_manualImageRemoveBtn', statusId: 'c_manualImageStatus',
+  setPath: (p) => { manualUploadedImagePath = p; }
+});
+
+// ===== Config persistence (worker_configs) so fields survive reload =====
+async function loadWorkerConfig(workerId) {
+  const { data } = await supabase.from('worker_configs').select('*').eq('worker_id', workerId).maybeSingle();
+  if (!data) return;
+  document.getElementById('c_sheetUrl').value = data.sheet_url || '';
+  document.getElementById('c_sheetTab').value = data.sheet_tab || '';
+  document.getElementById('c_appsUrl').value = data.apps_script_url || '';
+  document.getElementById('c_phoneCol').value = data.phone_column || '';
+  document.getElementById('c_nameCol').value = data.name_column || '';
+  document.getElementById('c_statusCol').value = data.status_column || '';
+  document.getElementById('c_dateCol').value = data.date_column || '';
+  document.getElementById('c_message').value = data.message || '';
+  document.getElementById('c_interval').value = data.interval_seconds || 120;
+  document.getElementById('c_manualMsg').value = data.manual_message || '';
+  uploadedImagePath = data.image_path || '';
+  manualUploadedImagePath = data.manual_image_path || '';
+  await sheetImageCtl.setPreviewFromPath(uploadedImagePath);
+  await manualImageCtl.setPreviewFromPath(manualUploadedImagePath);
+}
+
+async function saveWorkerConfig(workerId, fields) {
+  await supabase.from('worker_configs').upsert({ worker_id: workerId, ...fields }, { onConflict: 'worker_id' });
+}
+
 // Tab switching within the panel
 document.querySelectorAll('[data-ctab]').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -236,28 +329,42 @@ document.querySelectorAll('[data-ctab]').forEach(tab => {
   });
 });
 
-document.getElementById('c_startBtn').addEventListener('click', () => {
+document.getElementById('c_startBtn').addEventListener('click', async () => {
+  const w = currentWorker();
   const payload = {
     sheetUrl: val('c_sheetUrl'), sheetTab: val('c_sheetTab'), appsScriptUrl: val('c_appsUrl'),
     phoneColumn: val('c_phoneCol'), nameColumn: val('c_nameCol'),
     statusColumn: val('c_statusCol'), dateColumn: val('c_dateCol'),
-    message: val('c_message'), imagePath: '', intervalSeconds: parseInt(val('c_interval')) || 120
+    message: val('c_message'), imagePath: uploadedImagePath || '',
+    intervalSeconds: parseInt(val('c_interval')) || 120
   };
   if (!payload.sheetUrl) return alert('Sheet link daalein.');
   if (!payload.phoneColumn) return alert('Phone column daalein.');
   if (!payload.message) return alert('Message daalein.');
+  if (w) {
+    await saveWorkerConfig(w.id, {
+      sheet_url: payload.sheetUrl, sheet_tab: payload.sheetTab, apps_script_url: payload.appsScriptUrl,
+      phone_column: payload.phoneColumn, name_column: payload.nameColumn,
+      status_column: payload.statusColumn, date_column: payload.dateColumn,
+      message: payload.message, image_path: payload.imagePath, interval_seconds: payload.intervalSeconds
+    });
+  }
   sendCommand('start_monitoring', payload);
 });
 
 document.getElementById('c_stopBtn').addEventListener('click', () => sendCommand('stop_monitoring', {}));
 
-document.getElementById('c_sendBtn').addEventListener('click', () => {
+document.getElementById('c_sendBtn').addEventListener('click', async () => {
+  const w = currentWorker();
   const numbers = val('c_numbers').split('\n').map(n => n.trim()).filter(Boolean);
   const message = val('c_manualMsg');
   if (!numbers.length) return alert('Phone numbers daalein.');
   if (!message) return alert('Message daalein.');
   if (!confirm(`Send to ${numbers.length} number(s)?`)) return;
-  sendCommand('send_message', { phoneNumbers: numbers, message, imagePath: '' });
+  if (w) {
+    await saveWorkerConfig(w.id, { manual_message: message, manual_image_path: manualUploadedImagePath || '' });
+  }
+  sendCommand('send_message', { phoneNumbers: numbers, message, imagePath: manualUploadedImagePath || '' });
 });
 
 function val(id) { return (document.getElementById(id).value || '').trim(); }

@@ -106,6 +106,15 @@
               </div>
               <label>Message (use {name}, {phone})</label>
               <textarea class="input" id="c_message" rows="3" placeholder="Hello {name}"></textarea>
+
+              <label>Image (optional)</label>
+              <input type="file" id="c_imageInput" accept="image/jpeg,image/jpg,image/png,image/gif,image/webp">
+              <div id="c_imagePreviewBox" style="display:none;margin-top:8px;">
+                <img id="c_imagePreview" style="max-width:160px;max-height:160px;border-radius:8px;border:1px solid #e2e8f0;">
+                <button class="btn btn-sm btn-danger" id="c_imageRemoveBtn" style="margin-left:8px;">Remove</button>
+              </div>
+              <small id="c_imageStatus" style="color:#667;display:block;margin-top:4px;"></small>
+
               <div style="display:flex;gap:10px;margin-top:10px;">
                 <button class="btn btn-primary" id="c_startBtn">Start Monitoring</button>
                 <button class="btn btn-danger" id="c_stopBtn">Stop</button>
@@ -117,6 +126,15 @@
               <textarea class="input" id="c_numbers" rows="4" placeholder="919xxxxxxxxx"></textarea>
               <label>Message</label>
               <textarea class="input" id="c_manualMsg" rows="3"></textarea>
+
+              <label>Image (optional)</label>
+              <input type="file" id="c_manualImageInput" accept="image/jpeg,image/jpg,image/png,image/gif,image/webp">
+              <div id="c_manualImagePreviewBox" style="display:none;margin-top:8px;">
+                <img id="c_manualImagePreview" style="max-width:160px;max-height:160px;border-radius:8px;border:1px solid #e2e8f0;">
+                <button class="btn btn-sm btn-danger" id="c_manualImageRemoveBtn" style="margin-left:8px;">Remove</button>
+              </div>
+              <small id="c_manualImageStatus" style="color:#667;display:block;margin-top:4px;"></small>
+
               <button class="btn btn-primary" id="c_sendBtn" style="margin-top:10px;">Send Messages</button>
             </div>
 
