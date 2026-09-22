@@ -1145,21 +1145,26 @@ app.delete('/api/profiles/:name', (req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   controlPlane.start();
-  const url = `http://localhost:${PORT}`;
-  console.log(`Server running on ${url}`);
+  const localUrl = `http://localhost:${PORT}`;
+  console.log(`Server running on ${localUrl}`);
 
-  // Auto-open the browser only when running locally as a desktop app / EXE.
-  // On a hosted server (Railway etc.) there is no browser and `start`/`open`
-  // would just throw, so skip it. We treat "hosted" as: PORT provided by the
-  // platform OR a DATA_DIR volume configured.
+  // Which page to open in the browser on startup.
+  // For worker EXEs we open the shared cloud dashboard (Vercel) instead of the
+  // local page, so users control everything from one place. Override with the
+  // DASHBOARD_URL env var if the deployment URL changes.
+  const DASHBOARD_URL = process.env.DASHBOARD_URL
+    || 'https://whatsapp-integration-wine.vercel.app/cloud';
+  const openUrl = IS_PKG ? DASHBOARD_URL : localUrl;
+
+  // Only auto-open a browser on a local desktop/EXE run (not on a hosted server).
   const isHosted = !!process.env.DATA_DIR || (!!process.env.PORT && !IS_PKG && process.platform !== 'win32');
   if (!isHosted) {
-    console.log('Opening dashboard in your browser...');
+    console.log('Opening dashboard in your browser: ' + openUrl);
     try {
       const { exec } = require('child_process');
-      if (process.platform === 'win32') exec(`start "" "${url}"`);
-      else if (process.platform === 'darwin') exec(`open "${url}"`);
-      else exec(`xdg-open "${url}"`);
+      if (process.platform === 'win32') exec(`start "" "${openUrl}"`);
+      else if (process.platform === 'darwin') exec(`open "${openUrl}"`);
+      else exec(`xdg-open "${openUrl}"`);
     } catch (e) { /* ignore - user can open manually */ }
   }
 });
