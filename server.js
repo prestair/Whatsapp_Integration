@@ -125,8 +125,6 @@ let sheetConfig = {
   imagePath: '',
   isMonitoring: false,
   intervalSeconds: 30,
-  batchSize: 5,
-  batchGapSeconds: 10,
   processedRows: new Set()
 };
 let monitorInterval = null;
@@ -236,8 +234,6 @@ function loadSavedConfig() {
       sheetConfig.message = saved.message || '';
       sheetConfig.imagePath = saved.imagePath || '';
       sheetConfig.intervalSeconds = saved.intervalSeconds || 30;
-      sheetConfig.batchSize = saved.batchSize || 5;
-      sheetConfig.batchGapSeconds = saved.batchGapSeconds ?? 10;
       console.log('[Config] Saved config loaded');
     }
   } catch (err) {
@@ -1136,16 +1132,38 @@ server.listen(PORT, () => {
   }
 });
 
-process.on('SIGINT', async () => {
-  await stopMonitoring('process-shutdown');
-  await controlPlane.stop();
-  try { sock?.end(); } catch (e) {}
-  process.exit(0);
-});
+// On app shutdown: stop monitoring, log out of WhatsApp (ends the session),
+// delete local auth files, and remove this worker from the dashboard list.
+// Because the session is logged out, the next launch will require a fresh QR scan.
+let isShuttingDown = false;
+async function gracefulShutdown() {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log('[Shutdown] Cleaning up: stopping monitoring, logging out WhatsApp, removing device...');
+  try { await stopMonitoring('process-shutdown'); } catch (e) {}
 
-process.on('SIGTERM', async () => {
-  await stopMonitoring('process-shutdown');
-  await controlPlane.stop();
-  try { sock?.end(); } catch (e) {}
+  // Full WhatsApp logout so the session is invalidated (Option B).
+  try {
+    if (sock) {
+      try { await sock.logout(); } catch (e) { /* ignore */ }
+      try { sock.end(); } catch (e) { /* ignore */ }
+      sock = null;
+    }
+  } catch (e) {}
+
+  // Delete local auth files for the active profile so no stale session remains.
+  try {
+    const authDir = getProfileAuthDir(activeProfile || 'default');
+    if (fs.existsSync(authDir)) fs.rmSync(authDir, { recursive: true, force: true });
+  } catch (e) {}
+
+  // Remove this worker's record from Supabase so it disappears from the dashboard.
+  try { await controlPlane.stop({ removeWorker: true }); } catch (e) {}
+
   process.exit(0);
-});
+}
+
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGHUP', gracefulShutdown);
+process.on('SIGBREAK', gracefulShutdown); // Windows: console window close / Ctrl+Break

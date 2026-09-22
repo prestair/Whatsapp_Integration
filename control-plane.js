@@ -281,14 +281,30 @@ function createControlPlane({ workerId, workerName, onCommand, onLeaseExpired })
     pollCommands();
   }
 
-  async function stop() {
+  // Remove this worker's row from Supabase (used on clean shutdown so the
+  // dashboard device list stays clean and deleted devices don't reappear).
+  async function deleteWorker() {
+    if (!enabled) return;
+    try {
+      await request(`worker_instances?id=eq.${encodeURIComponent(resolvedWorkerId)}`, { method: 'DELETE' });
+    } catch (err) {
+      console.error('[ControlPlane] Worker delete failed:', err.message);
+    }
+  }
+
+  async function stop({ removeWorker = false } = {}) {
     if (pollTimer) clearInterval(pollTimer);
     if (leaseTimer) clearInterval(leaseTimer);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     pollTimer = null;
     leaseTimer = null;
     heartbeatTimer = null;
-    if (enabled) await publishStatus('offline');
+    if (!enabled) return;
+    if (removeWorker) {
+      await deleteWorker();
+    } else {
+      await publishStatus('offline');
+    }
   }
 
   return {
@@ -298,6 +314,7 @@ function createControlPlane({ workerId, workerName, onCommand, onLeaseExpired })
     leaseMs,
     start,
     stop,
+    deleteWorker,
     registerWorker,
     publishStatus,
     createSession,
