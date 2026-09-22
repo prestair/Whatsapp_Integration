@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Message Report</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { margin: 0; }
+    .ribbon {
+      display: flex; align-items: center; gap: 6px;
+      background: #128C7E; color: #fff; padding: 5px 8px;
+      flex-wrap: wrap; white-space: nowrap;
+    }
+    .ribbon-title { font-weight: 700; font-size: 0.82rem; flex-shrink: 0; }
+    .ribbon-summary { display: flex; gap: 4px; flex-shrink: 0; font-size: 0.72rem; }
+    .ribbon-summary .rs { background: #fff; padding: 2px 7px; border-radius: 10px; font-weight: 700; }
+    .ribbon-summary .rs b { margin-left: 3px; }
+    .ribbon-summary .rs.total, .ribbon-summary .rs.total b { color: #0d2c6b; }
+    .ribbon-summary .rs.sent, .ribbon-summary .rs.sent b { color: #1da851; }
+    .ribbon-summary .rs.failed, .ribbon-summary .rs.failed b { color: #e74c3c; }
+    .ribbon-filters { display: flex; align-items: center; gap: 5px; flex-shrink: 1; margin-left: auto; min-width: 0; flex-wrap: wrap; }
+    .ribbon-filters .rf { display: flex; align-items: center; gap: 3px; font-size: 0.66rem; }
+    .ribbon-filters .rf label { color: #d6fff0; font-weight: 600; }
+    .ribbon-filters .rf input, .ribbon-filters .rf select { padding: 3px 4px; border: none; border-radius: 4px; font-size: 0.72rem; }
+    .ribbon-filters .rf input[type="date"] { width: 108px; }
+    .ribbon-filters .rf select { padding: 3px 2px; max-width: 140px; }
+    .rbtn { border: none; border-radius: 4px; padding: 4px 8px; font-size: 0.72rem; font-weight: 600; cursor: pointer; color: #fff; flex-shrink: 0; }
+    .rbtn.apply { background: #25D366; }
+    .rbtn.reset { background: #6c8c86; }
+    .rbtn.excel { background: #1d6f42; }
+    .rbtn.print { background: #444; }
+    .rbtn.danger { background: #e74c3c; }
+    .rbtn.close { background: rgba(255,255,255,0.25); font-size: 16px; line-height: 1; padding: 2px 8px; }
+    .rbtn:hover { opacity: 0.9; }
+    .report-container { max-width: 100%; margin: 0 auto; padding: 8px 12px; }
+    .print-header, .print-summary { display: none; }
+    @media print {
+      .no-print { display: none !important; }
+      .print-header { display: block; }
+      .print-summary { display: block !important; }
+    }
+    .table-wrap { background: #fff; border-radius: 6px; overflow: auto; box-shadow: 0 1px 2px rgba(0,0,0,0.06); max-height: 78vh; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
+    th { background: #f7f9fb; position: sticky; top: 0; }
+    .badge-status { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 700; }
+    .badge-status.sent { background: #e8f8ef; color: #128C7E; }
+    .badge-status.failed { background: #fdecea; color: #c0392b; }
+    .empty { text-align: center; color: #667; padding: 30px; }
+  </style>
+</head>
+<body>
+  <div class="ribbon no-print">
+    <span class="ribbon-title">📊 Report</span>
+    <span class="ribbon-summary">
+      <span class="rs total">Total <b id="cardTotal">0</b></span>
+      <span class="rs sent">Sent <b id="cardSent">0</b></span>
+      <span class="rs failed">Failed <b id="cardFailed">0</b></span>
+    </span>
+    <span class="ribbon-filters">
+      <span class="rf"><label>Device</label>
+        <select id="deviceFilter"><option value="all">All devices</option></select>
+      </span>
+      <span class="rf"><label>From</label><input type="date" id="fromDate"></span>
+      <span class="rf"><label>To</label><input type="date" id="toDate"></span>
+      <span class="rf"><label>Status</label>
+        <select id="statusFilter">
+          <option value="all">All</option>
+          <option value="Sent">Sent</option>
+          <option value="Failed">Failed</option>
+        </select>
+      </span>
+      <span class="rf"><label>Source</label>
+        <select id="sourceFilter">
+          <option value="all">All</option>
+          <option value="sheet">Sheet</option>
+          <option value="manual">Manual</option>
+        </select>
+      </span>
+      <button class="rbtn apply" id="applyBtn">Apply</button>
+      <button class="rbtn reset" id="resetBtn">Reset</button>
+      <button class="rbtn excel" id="excelBtn">Excel</button>
+      <button class="rbtn print" id="printBtn">Print</button>
+      <button class="rbtn close" id="closeReportBtn" title="Back to dashboard">&times;</button>
+    </span>
+  </div>
+
+  <div class="report-container">
+    <div class="print-header">
+      <h2>WhatsApp Message Report</h2>
+      <div class="meta" id="printMeta"></div>
+    </div>
+    <div class="print-summary">
+      <span>Total: <b id="printTotal">0</b></span> &nbsp;|&nbsp;
+      <span>Sent: <b id="printSent">0</b></span> &nbsp;|&nbsp;
+      <span>Failed: <b id="printFailed">0</b></span>
+    </div>
+
+    <div class="table-wrap">
+      <table id="reportTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Device</th>
+            <th>Sender Number</th>
+            <th>Name</th>
+            <th>Receiver Number</th>
+            <th>Status</th>
+            <th>Source</th>
+            <th>Remark</th>
+          </tr>
+        </thead>
+        <tbody id="reportBody"></tbody>
+      </table>
+      <div class="empty" id="emptyMsg" style="display:none;">No records found for the selected filter.</div>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.58.0/dist/umd/supabase.min.js"></script>
+  <script src="cloud-report.js"></script>
+</body>
+</html>

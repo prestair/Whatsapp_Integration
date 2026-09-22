@@ -55,6 +55,8 @@ function showLogin() {
   loginScreen.style.display = 'block';
   appArea.style.display = 'none';
   logoutBtn.style.display = 'none';
+  const reportLink = document.getElementById('reportLink');
+  if (reportLink) reportLink.style.display = 'none';
   setBadge('disconnected', 'Signed out');
   if (workersTimer) { clearInterval(workersTimer); workersTimer = null; }
   if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null; }
@@ -65,6 +67,8 @@ function showApp() {
   loginScreen.style.display = 'none';
   appArea.style.display = 'block';
   logoutBtn.style.display = 'inline-block';
+  const reportLink = document.getElementById('reportLink');
+  if (reportLink) reportLink.style.display = 'inline-block';
   setBadge('connecting', 'Loading…');
   loadWorkers();
   if (!workersTimer) workersTimer = setInterval(loadWorkers, 10000);
@@ -308,6 +312,8 @@ async function loadWorkerConfig(workerId) {
   document.getElementById('c_dateCol').value = data.date_column || '';
   document.getElementById('c_message').value = data.message || '';
   document.getElementById('c_interval').value = data.interval_seconds || 120;
+  document.getElementById('c_batchSize').value = data.batch_size || 5;
+  document.getElementById('c_batchGap').value = data.batch_gap_seconds ?? 10;
   document.getElementById('c_manualMsg').value = data.manual_message || '';
   uploadedImagePath = data.image_path || '';
   manualUploadedImagePath = data.manual_image_path || '';
@@ -336,7 +342,9 @@ document.getElementById('c_startBtn').addEventListener('click', async () => {
     phoneColumn: val('c_phoneCol'), nameColumn: val('c_nameCol'),
     statusColumn: val('c_statusCol'), dateColumn: val('c_dateCol'),
     message: val('c_message'), imagePath: uploadedImagePath || '',
-    intervalSeconds: parseInt(val('c_interval')) || 120
+    intervalSeconds: parseInt(val('c_interval')) || 120,
+    batchSize: parseInt(val('c_batchSize')) || 5,
+    batchGapSeconds: val('c_batchGap') === '' ? 10 : parseInt(val('c_batchGap'))
   };
   if (!payload.sheetUrl) return alert('Sheet link daalein.');
   if (!payload.phoneColumn) return alert('Phone column daalein.');
@@ -346,7 +354,8 @@ document.getElementById('c_startBtn').addEventListener('click', async () => {
       sheet_url: payload.sheetUrl, sheet_tab: payload.sheetTab, apps_script_url: payload.appsScriptUrl,
       phone_column: payload.phoneColumn, name_column: payload.nameColumn,
       status_column: payload.statusColumn, date_column: payload.dateColumn,
-      message: payload.message, image_path: payload.imagePath, interval_seconds: payload.intervalSeconds
+      message: payload.message, image_path: payload.imagePath, interval_seconds: payload.intervalSeconds,
+      batch_size: payload.batchSize, batch_gap_seconds: payload.batchGapSeconds
     });
   }
   sendCommand('start_monitoring', payload);

@@ -125,6 +125,8 @@ let sheetConfig = {
   imagePath: '',
   isMonitoring: false,
   intervalSeconds: 30,
+  batchSize: 5,
+  batchGapSeconds: 10,
   processedRows: new Set()
 };
 let monitorInterval = null;
@@ -234,6 +236,8 @@ function loadSavedConfig() {
       sheetConfig.message = saved.message || '';
       sheetConfig.imagePath = saved.imagePath || '';
       sheetConfig.intervalSeconds = saved.intervalSeconds || 30;
+      sheetConfig.batchSize = saved.batchSize || 5;
+      sheetConfig.batchGapSeconds = saved.batchGapSeconds ?? 10;
       console.log('[Config] Saved config loaded');
     }
   } catch (err) {
@@ -253,7 +257,9 @@ function saveConfig() {
       dateColumn: sheetConfig.dateColumn,
       message: sheetConfig.message,
       imagePath: sheetConfig.imagePath,
-      intervalSeconds: sheetConfig.intervalSeconds
+      intervalSeconds: sheetConfig.intervalSeconds,
+      batchSize: sheetConfig.batchSize,
+      batchGapSeconds: sheetConfig.batchGapSeconds
     };
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(toSave, null, 2));
   } catch (err) {
@@ -585,9 +591,9 @@ async function checkForNewEntries() {
       toProcess.push({ row, phone, name });
     }
 
-    // STEP 2: Process in batches of 5, with a 10 second gap between batches
-    const BATCH_SIZE = 5;
-    const BATCH_GAP_MS = 10000;
+    // STEP 2: Process in configurable batches, with a configurable gap between batches
+    const BATCH_SIZE = Math.max(1, Number(sheetConfig.batchSize) || 5);
+    const BATCH_GAP_MS = Math.max(0, Number(sheetConfig.batchGapSeconds) ?? 10) * 1000;
 
     for (let b = 0; b < toProcess.length; b += BATCH_SIZE) {
       const batch = toProcess.slice(b, b + BATCH_SIZE);
@@ -683,7 +689,8 @@ async function checkForNewEntries() {
 async function startMonitoring(config, sessionMeta = {}) {
   const {
     sheetUrl, sheetTab, appsScriptUrl, phoneColumn, nameColumn,
-    statusColumn, dateColumn, message, imagePath, intervalSeconds
+    statusColumn, dateColumn, message, imagePath, intervalSeconds,
+    batchSize, batchGapSeconds
   } = config;
 
   if (!sheetUrl) throw new Error('Sheet URL required');
@@ -714,6 +721,8 @@ async function startMonitoring(config, sessionMeta = {}) {
   sheetConfig.message = message;
   sheetConfig.imagePath = imagePath || '';
   sheetConfig.intervalSeconds = Math.max(5, Number(intervalSeconds) || 30);
+  sheetConfig.batchSize = Math.max(1, Number(batchSize) || 5);
+  sheetConfig.batchGapSeconds = Math.max(0, Number(batchGapSeconds) ?? 10);
   sheetConfig.isMonitoring = true;
 
   const session = sessionMeta.sessionId && sessionMeta.leaseToken
@@ -789,6 +798,8 @@ io.on('connection', (socket) => {
     message: sheetConfig.message,
     imagePath: sheetConfig.imagePath,
     intervalSeconds: sheetConfig.intervalSeconds,
+    batchSize: sheetConfig.batchSize,
+    batchGapSeconds: sheetConfig.batchGapSeconds,
     processedCount: sheetConfig.processedRows.size,
     sessionId: activeMonitorSession?.sessionId || null
   });
@@ -953,6 +964,8 @@ app.get('/api/sheet/status', (req, res) => {
     message: sheetConfig.message,
     imagePath: sheetConfig.imagePath,
     intervalSeconds: sheetConfig.intervalSeconds,
+    batchSize: sheetConfig.batchSize,
+    batchGapSeconds: sheetConfig.batchGapSeconds,
     processedCount: sheetConfig.processedRows.size,
     sessionId: activeMonitorSession?.sessionId || null
   });
