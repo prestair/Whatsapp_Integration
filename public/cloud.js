@@ -37,6 +37,7 @@ const loginScreen = document.getElementById('loginScreen');
 const appArea = document.getElementById('appArea');
 const logoutBtn = document.getElementById('logoutBtn');
 let workersTimer = null;
+let qrPollTimer = null;
 
 function initSupabase() {
   if (!CFG.supabaseUrl || !CFG.supabaseAnonKey || !window.supabase) {
@@ -56,6 +57,7 @@ function showLogin() {
   logoutBtn.style.display = 'none';
   setBadge('disconnected', 'Signed out');
   if (workersTimer) { clearInterval(workersTimer); workersTimer = null; }
+  if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null; }
   if (eventsChannel) { supabase.removeChannel(eventsChannel); eventsChannel = null; }
 }
 
@@ -137,11 +139,29 @@ function escapeHtml(t) { const d = document.createElement('div'); d.textContent 
 
 function currentWorker() { return workers.find(w => w.id === selectedWorkerId); }
 
+async function refreshSelectedWorker() {
+  if (!selectedWorkerId) return;
+  const { data, error } = await supabase
+    .from('worker_instances')
+    .select('id, display_name, status, wa_connected, wa_number, qr_data, qr_updated_at, last_seen_at')
+    .eq('id', selectedWorkerId)
+    .limit(1);
+  if (error || !data || !data.length) return;
+  const idx = workers.findIndex(x => x.id === selectedWorkerId);
+  if (idx >= 0) workers[idx] = data[0]; else workers.push(data[0]);
+  renderPanel();
+}
+
 function selectWorker(id) {
   selectedWorkerId = id;
   renderWorkers();
   renderPanel();
   subscribeEvents(id);
+  // Poll the selected device every 3s so QR/connection state stays fresh
+  // even if a realtime UPDATE omits the large qr_data column.
+  if (qrPollTimer) clearInterval(qrPollTimer);
+  qrPollTimer = setInterval(refreshSelectedWorker, 3000);
+  refreshSelectedWorker();
 }
 
 function renderPanel() {
@@ -157,10 +177,12 @@ function renderPanel() {
     qrArea.style.display = 'none';
   } else if (w.qr_data) {
     qrArea.style.display = 'block';
-    qrImg.innerHTML = `<img src="${w.qr_data}" alt="QR">`;
+    qrImg.innerHTML = `<img src="${w.qr_data}" alt="QR" style="width:240px;height:240px;">`;
     connectedArea.style.display = 'none';
   } else {
-    qrArea.style.display = 'none';
+    // Online but QR not fetched yet — show generating message and fetch it.
+    qrArea.style.display = 'block';
+    qrImg.innerHTML = '<div style="padding:40px;color:#667;">QR generate ho raha hai… (thodी der wait karein)</div>';
     connectedArea.style.display = 'none';
   }
 }
@@ -182,10 +204,11 @@ function subscribeEvents(workerId) {
     .on('postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'worker_instances', filter: `id=eq.${workerId}` },
       (payload) => {
+        // Merge, then re-fetch full row (realtime may omit the large qr_data column).
         const idx = workers.findIndex(x => x.id === workerId);
         if (idx >= 0) workers[idx] = { ...workers[idx], ...payload.new };
         renderWorkers();
-        renderPanel();
+        refreshSelectedWorker();
       })
     .subscribe();
 }
