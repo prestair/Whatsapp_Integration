@@ -240,6 +240,22 @@ document.getElementById('c_sendBtn').addEventListener('click', () => {
 function val(id) { return (document.getElementById(id).value || '').trim(); }
 
 // Boot: initialize Supabase, then gate everything behind auth.
-if (initSupabase()) {
-  initAuth();
+// Wrapped so any failure is visible on screen instead of hanging on "Connecting…".
+function showBootError(msg) {
+  const err = document.getElementById('configError');
+  if (err) { err.style.display = 'block'; err.textContent = msg; }
+  setBadge('disconnected', 'Error');
 }
+
+(async function boot() {
+  try {
+    if (!window.supabase || !window.supabase.createClient) {
+      return showBootError('Supabase SDK load nahi hua (internet/CDN block?). Page refresh karein.');
+    }
+    if (!initSupabase()) return; // shows "Config missing"
+    await initAuth();
+  } catch (e) {
+    showBootError('Startup error: ' + (e && e.message ? e.message : e));
+    console.error('Boot error:', e);
+  }
+})();
