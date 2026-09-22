@@ -191,7 +191,7 @@ printBtn.addEventListener('click', () => {
 });
 
 document.getElementById('closeReportBtn').addEventListener('click', () => {
-  window.location.href = 'cloud.html';
+  window.location.href = 'cloud';
 });
 
 async function boot() {
@@ -204,7 +204,7 @@ async function boot() {
   });
   const { data } = await supabase.auth.getSession();
   if (!data.session) {
-    window.location.href = 'cloud.html';
+    window.location.href = 'cloud';
     return;
   }
   await loadDevices();
