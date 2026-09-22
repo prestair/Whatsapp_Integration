@@ -35,6 +35,28 @@ fs.rmSync(BUILD_DIR, { recursive: true, force: true });
 fs.mkdirSync(BUILD_DIR, { recursive: true });
 run('npx esbuild server.js --bundle --platform=node --target=node20 --outfile="' + BUNDLE + '" --format=cjs');
 
+// 1b. Patch dynamic import() of node core modules in the bundle.
+// Baileys' media upload uses `await import('https')` / `await import('http')`,
+// which throws ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING inside a pkg EXE and
+// causes "Media upload failed on all hosts". Replace those dynamic imports
+// with a static require so the packaged EXE can upload media.
+(() => {
+  let code = fs.readFileSync(BUNDLE, 'utf8');
+  const before = code;
+  // Handle esbuild's various shapes for dynamic import of core modules.
+  code = code
+    .replace(/import\(\s*["']https["']\s*\)/g, 'Promise.resolve(require("https"))')
+    .replace(/import\(\s*["']http["']\s*\)/g, 'Promise.resolve(require("http"))')
+    .replace(/__toESM\(import\(\s*["']https["']\s*\)\)/g, '__toESM(require("https"))')
+    .replace(/__toESM\(import\(\s*["']http["']\s*\)\)/g, '__toESM(require("http"))');
+  if (code !== before) {
+    fs.writeFileSync(BUNDLE, code);
+    console.log('Patched dynamic import() of http/https for pkg compatibility.');
+  } else {
+    console.log('No dynamic http/https import() found to patch (already static?).');
+  }
+})();
+
 // 2. Copy public assets so __dirname/public resolves inside the snapshot
 copyDir(path.join(ROOT, 'public'), path.join(BUILD_DIR, 'public'));
 console.log('Copied public/ -> build/public/');
