@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WA Cloud Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .cloud-grid { display: grid; grid-template-columns: 280px 1fr; gap: 16px; }
+    @media (max-width: 800px) { .cloud-grid { grid-template-columns: 1fr; } }
+    .worker-item { padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+    .worker-item.active { border-color: #128C7E; background: #e8f8ef; }
+    .worker-item .wname { font-weight: 600; }
+    .worker-item .wmeta { font-size: 11px; color: #667; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .dot.online { background: #25D366; }
+    .dot.offline { background: #c0392b; }
+    .qr-box img { width: 240px; height: 240px; }
+    .log-line { font-size: 12px; padding: 2px 0; border-bottom: 1px solid #f0f0f0; }
+    .log-line.success { color: #128C7E; }
+    .log-line.error { color: #c0392b; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        <h1>WA Cloud Dashboard</h1>
+      </div>
+      <div class="status-badge" id="cpBadge"><span class="status-dot disconnected"></span><span id="cpText">Connecting…</span></div>
+    </header>
+
+    <main class="main-content">
+      <div id="configError" class="card" style="display:none;background:#fdecea;color:#c0392b;">
+        Supabase config missing. Set <code>supabaseUrl</code> and <code>supabaseAnonKey</code> in <code>config.js</code>.
+      </div>
+
+      <div class="cloud-grid">
+        <!-- Worker list -->
+        <section class="card">
+          <h3>Devices</h3>
+          <small style="color:#667;">Har user apna EXE chalata hai. Yahan se device chunein.</small>
+          <div id="workerList" style="margin-top:10px;"></div>
+        </section>
+
+        <!-- Selected worker panel -->
+        <section class="card">
+          <div id="noWorker" style="text-align:center;color:#667;padding:30px;">
+            Koi device select karein. Agar list khaali hai, kisi computer par worker EXE chalayein.
+          </div>
+
+          <div id="workerPanel" style="display:none;">
+            <h3 id="panelTitle">Device</h3>
+
+            <!-- QR -->
+            <div id="qrArea" class="qr-box" style="text-align:center;margin:14px 0;display:none;">
+              <p style="margin-bottom:8px;">WhatsApp &gt; Linked Devices &gt; Link a Device</p>
+              <div id="qrImg"></div>
+            </div>
+
+            <div id="connectedArea" style="display:none;margin:12px 0;">
+              <span class="connected-banner"><span class="checkmark">&#10004;</span> Connected <strong id="waNumber"></strong></span>
+            </div>
+
+            <!-- Sheet monitor -->
+            <div class="tabs" style="margin-top:14px;">
+              <button class="tab active" data-ctab="sheet">Google Sheet Monitor</button>
+              <button class="tab" data-ctab="manual">Manual Send</button>
+            </div>
+
+            <div class="tab-content active" id="sheetPanel">
+              <label>Google Sheet Link</label>
+              <input class="input" id="c_sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/…">
+              <div class="form-row-2col">
+                <div><label>Sheet Tab</label><input class="input" id="c_sheetTab" placeholder="Sheet1"></div>
+                <div><label>Interval (sec)</label><input class="input" id="c_interval" type="number" value="120"></div>
+              </div>
+              <label>Apps Script URL</label>
+              <input class="input" id="c_appsUrl" placeholder="https://script.google.com/macros/s/…/exec">
+              <div class="form-row-2col">
+                <div><label>Phone Column</label><input class="input" id="c_phoneCol" placeholder="phone_number"></div>
+                <div><label>Name Column</label><input class="input" id="c_nameCol" placeholder="full_name"></div>
+              </div>
+              <div class="form-row-2col">
+                <div><label>Status Column</label><input class="input" id="c_statusCol" placeholder="Status"></div>
+                <div><label>Date Column</label><input class="input" id="c_dateCol" placeholder="Date"></div>
+              </div>
+              <label>Message (use {name}, {phone})</label>
+              <textarea class="input" id="c_message" rows="3" placeholder="Hello {name}"></textarea>
+              <div style="display:flex;gap:10px;margin-top:10px;">
+                <button class="btn btn-primary" id="c_startBtn">Start Monitoring</button>
+                <button class="btn btn-danger" id="c_stopBtn">Stop</button>
+              </div>
+            </div>
+
+            <div class="tab-content" id="manualPanel">
+              <label>Phone Numbers (one per line)</label>
+              <textarea class="input" id="c_numbers" rows="4" placeholder="919xxxxxxxxx"></textarea>
+              <label>Message</label>
+              <textarea class="input" id="c_manualMsg" rows="3"></textarea>
+              <button class="btn btn-primary" id="c_sendBtn" style="margin-top:10px;">Send Messages</button>
+            </div>
+
+            <h4 style="margin-top:16px;">Live Log</h4>
+            <div id="cloudLog" style="max-height:220px;overflow:auto;border:1px solid #eee;border-radius:8px;padding:8px;"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="cloud.js"></script>
+</body>
+</html>

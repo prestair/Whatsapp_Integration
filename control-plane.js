@@ -10,7 +10,7 @@ const os = require('os');
  * The service-role key must only be used by this local worker, never by the
  * Vercel/browser frontend.
  */
-function createControlPlane({ workerId, onCommand, onLeaseExpired }) {
+function createControlPlane({ workerId, workerName, onCommand, onLeaseExpired }) {
   const baseUrl = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
   const enabled = Boolean(baseUrl && serviceKey);
@@ -43,6 +43,8 @@ function createControlPlane({ workerId, onCommand, onLeaseExpired }) {
     return text ? JSON.parse(text) : null;
   }
 
+  const displayName = workerName || process.env.CONTROL_PLANE_WORKER_NAME || os.hostname();
+
   async function registerWorker(status = 'online', metadata = {}) {
     if (!enabled) return null;
     const rows = await request('worker_instances', {
@@ -51,11 +53,80 @@ function createControlPlane({ workerId, onCommand, onLeaseExpired }) {
       body: JSON.stringify({
         id: resolvedWorkerId,
         status,
+        display_name: displayName,
         metadata: { hostname: os.hostname(), platform: process.platform, ...metadata },
         last_seen_at: new Date().toISOString()
       })
     });
     return rows?.[0] || null;
+  }
+
+  async function patchWorker(fields) {
+    if (!enabled) return;
+    try {
+      await request(`worker_instances?id=eq.${encodeURIComponent(resolvedWorkerId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ ...fields, last_seen_at: new Date().toISOString() })
+      });
+    } catch (err) {
+      console.error('[ControlPlane] Worker patch failed:', err.message);
+    }
+  }
+
+  // Publish the current WhatsApp QR so the shared dashboard can display it.
+  async function publishQr(qrData) {
+    await patchWorker({ qr_data: qrData, qr_updated_at: new Date().toISOString(), wa_connected: false });
+  }
+
+  async function clearQr() {
+    await patchWorker({ qr_data: null });
+  }
+
+  // Publish WhatsApp connection state (connected/disconnected + number).
+  async function updateWaConnection(connected, number) {
+    await patchWorker({ wa_connected: !!connected, wa_number: number || null, qr_data: connected ? null : undefined });
+  }
+
+  // Append a live event (log line, message sent/failed, sheet check result).
+  async function logEvent(eventType, payload = {}, sessionId = null) {
+    if (!enabled) return;
+    try {
+      await request('worker_events', {
+        method: 'POST',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          worker_id: resolvedWorkerId,
+          session_id: sessionId,
+          event_type: eventType,
+          payload
+        })
+      });
+    } catch (err) {
+      console.error('[ControlPlane] Event log failed:', err.message);
+    }
+  }
+
+  // Insert a message-history row (central reporting across all workers).
+  async function recordHistory(entry) {
+    if (!enabled) return;
+    try {
+      await request('message_history', {
+        method: 'POST',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          worker_id: resolvedWorkerId,
+          timestamp: new Date().toISOString(),
+          sender: entry.sender || null,
+          name: entry.name || null,
+          phone: entry.phone || null,
+          status: entry.status || null,
+          source: entry.source || null,
+          error: entry.error || null
+        })
+      });
+    } catch (err) {
+      console.error('[ControlPlane] History insert failed:', err.message);
+    }
   }
 
   async function publishStatus(status, metadata = {}) {
@@ -208,6 +279,7 @@ function createControlPlane({ workerId, onCommand, onLeaseExpired }) {
   return {
     enabled,
     workerId: resolvedWorkerId,
+    displayName,
     leaseMs,
     start,
     stop,
@@ -216,7 +288,12 @@ function createControlPlane({ workerId, onCommand, onLeaseExpired }) {
     createSession,
     heartbeat,
     stopSession,
-    updateSessionState
+    updateSessionState,
+    publishQr,
+    clearQr,
+    updateWaConnection,
+    logEvent,
+    recordHistory
   };
 }
 

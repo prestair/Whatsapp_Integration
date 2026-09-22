@@ -19,6 +19,7 @@ cloudflared-config.yml
 
 # Runtime data
 message_history.json
+worker.json
 uploads/
 
 # Logs

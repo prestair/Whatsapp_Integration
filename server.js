@@ -1,4 +1,11 @@
-try { require('dotenv').config(); } catch (e) { /* dotenv optional; ignore if absent */ }
+// Load .env from the executable's folder when packaged (pkg), else the project.
+try {
+  const _path = require('path');
+  const _envDir = (typeof process.pkg !== 'undefined')
+    ? _path.dirname(process.execPath)
+    : __dirname;
+  require('dotenv').config({ path: _path.join(_envDir, '.env') });
+} catch (e) { /* dotenv optional; ignore if absent */ }
 const express = require('express');
 // Baileys v7+ is ESM-only. We bundle the whole app into a single CommonJS file
 // with esbuild before packaging, so a normal require works here and esbuild
@@ -14,6 +21,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const pino = require('pino');
 const { createControlPlane } = require('./control-plane');
+const { resolveWorkerIdentity } = require('./worker-identity');
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const app = express();
@@ -124,7 +132,12 @@ let isChecking = false;
 let activeMonitorSession = null;
 let monitorLeaseTimer = null;
 
+const workerIdentity = resolveWorkerIdentity(DATA_DIR);
+console.log(`[Worker] Identity: ${workerIdentity.name} (${workerIdentity.id})`);
+
 const controlPlane = createControlPlane({
+  workerId: workerIdentity.id,
+  workerName: workerIdentity.name,
   onCommand: async (command) => {
     const payload = command.payload || {};
     if (command.command_type === 'start_monitoring') {
@@ -135,6 +148,12 @@ const controlPlane = createControlPlane({
       });
     } else if (command.command_type === 'stop_monitoring') {
       await stopMonitoring('control-plane-command');
+    } else if (command.command_type === 'send_message') {
+      await sendBulk({
+        phoneNumbers: payload.phoneNumbers || [],
+        message: payload.message || '',
+        imagePath: payload.imagePath || ''
+      });
     }
   },
   onLeaseExpired: async () => {
@@ -168,6 +187,21 @@ function appendHistory(entry) {
   } catch (err) {
     console.error('[History] Failed to log:', err.message);
   }
+  // Mirror to Supabase for the shared dashboard (no-op when control plane disabled)
+  try {
+    controlPlane.recordHistory({
+      sender: loggedInNumber || '',
+      name: entry.name || '',
+      phone: entry.phone || '',
+      status: entry.status || '',
+      source: entry.source || 'sheet',
+      error: entry.error || ''
+    });
+    controlPlane.logEvent(
+      entry.status && entry.status.toLowerCase() === 'sent' ? 'message_sent' : 'message_failed',
+      { name: entry.name || '', phone: entry.phone || '', status: entry.status || '', source: entry.source || '', error: entry.error || '' }
+    );
+  } catch (e) { /* control plane optional */ }
 }
 
 function readHistory() {
@@ -361,6 +395,7 @@ async function connectWhatsApp(profileName) {
       console.log(`[${profileName}] QR Code received`);
       qrCodeData = await QRCode.toDataURL(qr);
       io.emit('qr', qrCodeData);
+      controlPlane.publishQr(qrCodeData).catch(() => {});
     }
 
     if (connection === 'close') {
@@ -370,6 +405,7 @@ async function connectWhatsApp(profileName) {
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       console.log(`[${profileName}] Connection closed. Status:`, statusCode);
       controlPlane.publishStatus('offline', { profile: profileName, reason: statusCode }).catch(() => {});
+      controlPlane.updateWaConnection(false, '').catch(() => {});
       io.emit('disconnected', { message: 'Disconnected' });
       if (shouldReconnect) {
         console.log(`[${profileName}] Reconnecting...`);
@@ -389,6 +425,7 @@ async function connectWhatsApp(profileName) {
       isConnected = true;
       qrCodeData = null;
       controlPlane.publishStatus('online', { profile: profileName, number: loggedInNumber }).catch(() => {});
+      controlPlane.updateWaConnection(true, loggedInNumber).catch(() => {});
       io.emit('ready', { message: 'WhatsApp connected!', profile: profileName, number: loggedInNumber });
     }
   });
@@ -763,20 +800,16 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
   res.json({ success: true, filename: req.file.filename, path: req.file.path });
 });
 
-// Manual bulk send
-app.post('/api/send', async (req, res) => {
-  const { phoneNumbers, message, imagePath } = req.body;
-
-  if (!isConnected) return res.status(400).json({ error: 'WhatsApp not connected.' });
-  if (!phoneNumbers || phoneNumbers.length === 0) return res.status(400).json({ error: 'No phone numbers' });
-  if (!message && !imagePath) return res.status(400).json({ error: 'Provide message or image' });
+// Reusable manual bulk send (used by HTTP /api/send and Supabase send_message)
+async function sendBulk({ phoneNumbers, message, imagePath }) {
+  if (!isConnected) throw new Error('WhatsApp not connected.');
+  if (!phoneNumbers || phoneNumbers.length === 0) throw new Error('No phone numbers');
+  if (!message && !imagePath) throw new Error('Provide message or image');
 
   const results = [];
-
   for (let i = 0; i < phoneNumbers.length; i++) {
-    const phone = phoneNumbers[i].trim().replace(/[^0-9]/g, '');
+    const phone = String(phoneNumbers[i]).trim().replace(/[^0-9]/g, '');
     const jid = phone + '@s.whatsapp.net';
-
     try {
       if (imagePath) {
         const fullPath = path.resolve(imagePath);
@@ -800,10 +833,19 @@ app.post('/api/send', async (req, res) => {
       io.emit('message_failed', { phone, index: i, error: err.message });
     }
   }
-
   const sent = results.filter(r => r.success).length;
   const failed = results.filter(r => !r.success).length;
-  res.json({ success: true, summary: { total: phoneNumbers.length, sent, failed }, results });
+  return { success: true, summary: { total: phoneNumbers.length, sent, failed }, results };
+}
+
+// Manual bulk send
+app.post('/api/send', async (req, res) => {
+  try {
+    const result = await sendBulk(req.body || {});
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ===== Sheet Monitor API =====
