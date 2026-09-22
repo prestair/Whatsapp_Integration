@@ -81,6 +81,10 @@
               <span class="connected-banner"><span class="checkmark">&#10004;</span> Connected <strong id="waNumber"></strong></span>
             </div>
 
+            <!-- Live Log (moved above the form so recent activity is always visible) -->
+            <h4 style="margin-top:10px;">Live Log</h4>
+            <div id="cloudLog" style="max-height:220px;overflow:auto;border:1px solid #eee;border-radius:8px;padding:8px;margin-bottom:16px;"></div>
+
             <!-- Sheet monitor -->
             <div class="tabs" style="margin-top:14px;">
               <button class="tab active" data-ctab="sheet">Google Sheet Monitor</button>
@@ -137,9 +141,6 @@
 
               <button class="btn btn-primary" id="c_sendBtn" style="margin-top:10px;">Send Messages</button>
             </div>
-
-            <h4 style="margin-top:16px;">Live Log</h4>
-            <div id="cloudLog" style="max-height:220px;overflow:auto;border:1px solid #eee;border-radius:8px;padding:8px;"></div>
           </div>
         </section>
       </div>

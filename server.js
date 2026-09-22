@@ -623,9 +623,9 @@ async function checkForNewEntries() {
           const jid = result.jid;
 
           if (sheetConfig.imagePath) {
-            const imageBuffer = await resolveImageBuffer(sheetConfig.imagePath);
-            if (imageBuffer) {
-              await sock.sendMessage(jid, { image: imageBuffer, caption: messageToSend });
+            const img = await resolveImageBuffer(sheetConfig.imagePath);
+            if (img) {
+              await sock.sendMessage(jid, { image: img.buffer, mimetype: img.mimetype, caption: messageToSend });
             } else {
               await sock.sendMessage(jid, { text: messageToSend });
             }
@@ -809,8 +809,19 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
 //  - Local filesystem path (legacy: images uploaded via /api/upload)
 //  - Supabase Storage public/signed URL (https://...supabase.co/storage/v1/object/...)
 //  - Supabase Storage bucket path "message-images/<file>" (downloaded via service key)
+//
+// Returns { buffer, mimetype } or null. Baileys' media upload is much more
+// reliable when given an explicit mimetype instead of relying on magic-byte
+// sniffing, so we always derive one from the file extension.
+function mimetypeForPath(p) {
+  const ext = (p.split('.').pop() || '').toLowerCase().split(/[?#]/)[0];
+  const map = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+  return map[ext] || 'image/jpeg';
+}
+
 async function resolveImageBuffer(imagePath) {
   if (!imagePath) return null;
+  const mimetype = mimetypeForPath(imagePath);
 
   // Supabase Storage bucket-relative path, e.g. "message-images/abc.jpg"
   if (imagePath.startsWith('message-images/') && controlPlane.enabled) {
@@ -821,19 +832,26 @@ async function resolveImageBuffer(imagePath) {
       headers: { apikey: key, Authorization: `Bearer ${key}` }
     });
     if (!res.ok) throw new Error(`Image download failed: ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (!buffer.length) throw new Error('Downloaded image is empty');
+    return { buffer, mimetype };
   }
 
   // Any absolute Supabase/HTTP(S) URL (e.g. a signed URL from the dashboard)
   if (/^https?:\/\//i.test(imagePath)) {
     const res = await fetch(imagePath);
     if (!res.ok) throw new Error(`Image download failed: ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (!buffer.length) throw new Error('Downloaded image is empty');
+    return { buffer, mimetype };
   }
 
   // Legacy local filesystem path
   const fullPath = path.resolve(imagePath);
-  if (fs.existsSync(fullPath)) return fs.readFileSync(fullPath);
+  if (fs.existsSync(fullPath)) {
+    const buffer = fs.readFileSync(fullPath);
+    return { buffer, mimetype: mimetypeForPath(fullPath) };
+  }
   return null;
 }
 
@@ -849,9 +867,9 @@ async function sendBulk({ phoneNumbers, message, imagePath }) {
     const jid = phone + '@s.whatsapp.net';
     try {
       if (imagePath) {
-        const imageBuffer = await resolveImageBuffer(imagePath);
-        if (imageBuffer) {
-          await sock.sendMessage(jid, { image: imageBuffer, caption: message || '' });
+        const img = await resolveImageBuffer(imagePath);
+        if (img) {
+          await sock.sendMessage(jid, { image: img.buffer, mimetype: img.mimetype, caption: message || '' });
         } else if (message) {
           await sock.sendMessage(jid, { text: message });
         }
