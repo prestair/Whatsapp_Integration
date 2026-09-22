@@ -71,6 +71,9 @@ function showApp() {
   if (reportLink) reportLink.style.display = 'inline-block';
   setBadge('connecting', 'Loading…');
   loadWorkers();
+  // Prefill the form from the shared global config right away, before any device
+  // is selected, so the settings you defined once are always visible.
+  loadWorkerConfig().catch(err => console.warn('Global prefill failed:', err.message));
   if (!workersTimer) workersTimer = setInterval(loadWorkers, 10000);
 }
 
@@ -331,9 +334,15 @@ const manualImageCtl = wireImageInput({
   setPath: (p) => { manualUploadedImagePath = p; }
 });
 
-// ===== Config persistence (worker_configs) so fields survive reload =====
+// ===== Shared/global config =====
+// One shared config (worker_id = '__global__') that prefills for EVERY device.
+// Define it once and it appears on all workers. Saving updates the shared config.
+const GLOBAL_CONFIG_ID = '__global__';
+
 async function loadWorkerConfig(workerId) {
-  const { data } = await supabase.from('worker_configs').select('*').eq('worker_id', workerId).maybeSingle();
+  // Always prefill from the shared global config so every device shows the
+  // same settings you defined once.
+  const { data } = await supabase.from('worker_configs').select('*').eq('worker_id', GLOBAL_CONFIG_ID).maybeSingle();
   if (!data) return;
   document.getElementById('c_sheetUrl').value = data.sheet_url || '';
   document.getElementById('c_sheetTab').value = data.sheet_tab || '';
@@ -354,7 +363,8 @@ async function loadWorkerConfig(workerId) {
 }
 
 async function saveWorkerConfig(workerId, fields) {
-  await supabase.from('worker_configs').upsert({ worker_id: workerId, ...fields }, { onConflict: 'worker_id' });
+  // Save to the shared global config so it prefills on every device.
+  await supabase.from('worker_configs').upsert({ worker_id: GLOBAL_CONFIG_ID, ...fields }, { onConflict: 'worker_id' });
 }
 
 // Tab switching within the panel
